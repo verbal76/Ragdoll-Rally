@@ -134,7 +134,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: launch-poc-b${{ github.run_number }}
-          name: Launch POC b${{ github.run_number }} (infra: About + OTA client; playfield unchanged)
+          name: 'Launch POC b${{ github.run_number }} (infra - About + OTA client, playfield unchanged)'
           prerelease: true
           target_commitish: ${{ github.sha }}
           body: |
