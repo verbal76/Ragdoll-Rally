@@ -11,7 +11,10 @@ const S := 1.5          # kit unit -> metres
 const PROP_S := 2.5     # detail props are tiny in the kit
 const POLE_TOP := Vector3(0.0, 3.4, 0.0)
 const POLE_Z := 1.7
-const TARGET_X := 58.0  # bullseye centre
+const WORLD_X_MIN := -25.0
+const WORLD_X_MAX := 215.0
+const WORLD_Z := 130.0
+const ACTIVE_CAP := 90          # max simultaneously simulated released pieces
 
 var pieces: Array[RigidBody3D] = []
 var props: Array[RigidBody3D] = []
@@ -20,8 +23,20 @@ var used_assets: Array[String] = []
 var _phys_stone := PhysicsMaterial.new()
 var band_l: MeshInstance3D
 var band_r: MeshInstance3D
+var targets: Array[Dictionary] = []     # {key, name, pts, pos, region}
+var released_order: Array[RigidBody3D] = []
+var legacy: bool = false                # tests: original small village only
+var rings: Array[Dictionary] = []       # landing rings {key, name, center: Vector2, r, base}
+var gaps: Array[Dictionary] = []        # thread-the-gap targets {key, name, pts, x, half, ymax}
+var _reserved: Array[Rect2] = []        # keep-out zones for the decorative city
+var _decor_walls: Array[Transform3D] = []
+var _decor_roofs: Array[Transform3D] = []
+var _decor_trees: Array[Transform3D] = []
+var _decor_body: StaticBody3D
+var _cap_timer: float = 0.0
 
-func build() -> void:
+func build(p_legacy: bool = false) -> void:
+	legacy = p_legacy
 	_phys_stone.friction = 0.8
 	_phys_stone.bounce = 0.12
 	_ground()
@@ -34,6 +49,16 @@ func build() -> void:
 	_castle()
 	_scenery()
 	_bullseye()
+	if not legacy:
+		_fortress()
+		_barn_yard()
+		_watch_village()
+		_harbor()
+		_gate_and_keep()
+		_filler()
+		_deep_city()
+		_perimeter()
+		_decor_city()
 
 # ------------------------------------------------------------------ helpers
 func _kit(model: String) -> Node3D:
@@ -68,16 +93,17 @@ func _ground() -> void:
 	g.physics_material_override = pm
 	var cs := CollisionShape3D.new()
 	var sh := BoxShape3D.new()
-	sh.size = Vector3(300, 2, 120)
+	var gsz := Vector3(300, 2, 120) if legacy else Vector3(460, 2, 340)
+	sh.size = gsz
 	cs.shape = sh
 	g.add_child(cs)
-	g.position = Vector3(80, -1, 0)
-	var vis := _box_mesh(Vector3(300, 2, 120), Color(0.40, 0.66, 0.34))
+	g.position = Vector3(80, -1, 0) if legacy else Vector3(95, -1, 0)
+	var vis := _box_mesh(gsz, Color(0.40, 0.66, 0.34))
 	g.add_child(vis)
 	add_child(g)
 	# cobble road strip so the town reads as a place
-	var road := _box_mesh(Vector3(70, 0.05, 6), Color(0.62, 0.58, 0.5))
-	road.position = Vector3(36, 0.02, 0)
+	var road := _box_mesh(Vector3(70 if legacy else 230, 0.05, 6), Color(0.62, 0.58, 0.5))
+	road.position = Vector3(36 if legacy else 90, 0.02, 0)
 	add_child(road)
 
 func _launcher() -> void:
@@ -129,6 +155,7 @@ func _piece(model: String, tile: Vector3, kind: String, group: String, size: Vec
 	m.scale = Vector3.ONE * S
 	m.position = Vector3(0, -h * 0.5, 0)
 	b.add_child(m)
+	b.set_meta("rest", b.position)
 	b.set_meta("kind", kind)
 	b.set_meta("group", group)
 	b.set_meta("tough", tough)
@@ -182,6 +209,7 @@ func _prop(model: String, pos: Vector3, real_size: Vector3, mass: float, scale_m
 	m.position = Vector3(0, -real_size.y * 0.5, 0)
 	b.add_child(m)
 	b.set_meta("prop", true)
+	b.set_meta("rest", b.position)
 	add_child(b)
 	b.sleeping = true
 	props.append(b)
@@ -201,19 +229,19 @@ func _house() -> void:
 				tough = 3.0
 			var p := _piece(fm, Vector3(10, ty, tz), "wall", "house", Vector3.ONE, 3.0, tough)
 			if fm == "wall-window":
-				p.set_meta("bonus", {"name": "WINDOW!", "pts": 300, "key": "window"})
+				_bonus(p, "window", "House Window", 150)
 			_piece("wall", Vector3(11, ty, tz), "wall", "house", Vector3.ONE, 3.0, 6.5)
 	for tz in [-1, 0, 1]:
 		for tx in [10, 11]:
 			var r := _piece("roof", Vector3(tx, 2, tz), "roof", "house", Vector3.ONE, 2.5, 5.5)
 			if tx == 11 and tz == 0:
-				r.set_meta("bonus", {"name": "ROOF!", "pts": 100, "key": "roof"})
+				_bonus(r, "roof", "House Roof", 100)
 	# chimney on the roof
 	for i in 3:
 		var c := _piece("column", Vector3(11, 3.0 + i * 1.0, 1), "column", "chimney", Vector3(0.4, 1.0, 0.4), 1.0, 3.5)
 		c.set_meta("group_all", true)
 		if i == 2:
-			c.set_meta("bonus", {"name": "CHIMNEY!", "pts": 250, "key": "chimney"})
+			_bonus(c, "chimney", "Chimney", 250)
 
 func _tower() -> void:
 	var tz: float = -4.0
@@ -224,7 +252,7 @@ func _tower() -> void:
 		var p := _piece(names[i], Vector3(tx, i, tz), "tower", "tower", sz, 4.0, 4.0)
 		p.set_meta("group_all", true)
 		if i == names.size() - 1:
-			p.set_meta("bonus", {"name": "TOWER TOPPLED!", "pts": 300, "key": "tower"})
+			_bonus(p, "tower", "Old Tower", 300)
 
 func _small_house() -> void:
 	for ty in 1:
@@ -293,18 +321,40 @@ func _scenery() -> void:
 		add_child(t)
 
 func _bullseye() -> void:
-	var cols := [Color(0.9, 0.15, 0.15), Color(0.97, 0.97, 0.97), Color(0.9, 0.15, 0.15), Color(0.97, 0.97, 0.97)]
-	for i in 4:
+	if legacy:
+		_ring("bullseye", "Bullseye", Vector2(58.0, 0.0), 8.0, 500)
+	else:
+		_ring("bullseye", "Bullseye", Vector2(68.0, 14.0), 7.5, 500)
+
+## A landing target: concentric rings; the closer to the centre the ground contact, the more it pays
+## (dead centre x2, inner x1, middle x0.5, outer x0.3 of `base`).
+func _ring(key: String, nm: String, center: Vector2, r: float, base: int) -> void:
+	rings.append({"key": key, "name": nm, "center": center, "r": r, "base": base})
+	var cols := [Color(0.9, 0.15, 0.15), Color(0.97, 0.97, 0.97), Color(0.9, 0.15, 0.15), Color(0.97, 0.97, 0.97), Color(1.0, 0.85, 0.1)]
+	var fr := [1.0, 0.7, 0.4, 0.17, 0.08]
+	for i in 5:
 		var d := MeshInstance3D.new()
 		var cm := CylinderMesh.new()
-		var r: float = 8.0 - i * 2.0
-		cm.top_radius = r
-		cm.bottom_radius = r
+		var rr: float = r * float(fr[i])
+		cm.top_radius = rr
+		cm.bottom_radius = rr
 		cm.height = 0.04
 		cm.material = _mat(cols[i])
 		d.mesh = cm
-		d.position = Vector3(TARGET_X, 0.03 + i * 0.01, 0)
+		d.position = Vector3(center.x, 0.03 + i * 0.01, center.y)
 		add_child(d)
+	_target(key, nm, base, Vector3(center.x, 0.5, center.y))
+
+## Points for a ground contact at `pos` (0 = outside every ring) and the ring record.
+func ring_award(pos: Vector3) -> Dictionary:
+	for rg in rings:
+		var d: float = Vector2(pos.x - (rg["center"] as Vector2).x, pos.z - (rg["center"] as Vector2).y).length()
+		var f: float = d / float(rg["r"])
+		if f <= 1.0:
+			var mult: float = 2.0 if f <= 0.17 else (1.0 if f <= 0.4 else (0.5 if f <= 0.7 else 0.3))
+			var nm: String = "DEAD CENTRE " + str(rg["name"]) if f <= 0.17 else str(rg["name"])
+			return {"key": rg["key"], "name": nm, "pts": int(float(rg["base"]) * mult), "dead": f <= 0.17}
+	return {}
 
 # --------------------------------------------------------------- destruction
 func frozen_count() -> int:
@@ -317,7 +367,10 @@ func frozen_count() -> int:
 func release(p: RigidBody3D, vel: Vector3) -> void:
 	if not p.freeze:
 		return
+	if p.get_meta("capped", false):
+		return
 	p.freeze = false
+	released_order.append(p)
 	p.linear_velocity = vel
 	p.angular_velocity = Vector3(randf_range(-4, 4), randf_range(-4, 4), randf_range(-4, 4))
 	piece_released.emit(p)
@@ -331,7 +384,7 @@ func smash(hit: RigidBody3D, hit_pos: Vector3, dir: Vector3, speed: float) -> Ar
 	var group: String = hit.get_meta("group", "")
 	var all_group: bool = hit.get_meta("group_all", false)
 	for p in pieces:
-		if not p.freeze:
+		if not p.freeze or p.get_meta("capped", false):
 			continue
 		var d: float = p.global_position.distance_to(hit_pos)
 		var same: bool = all_group and p.get_meta("group", "") == group
@@ -341,3 +394,365 @@ func smash(hit: RigidBody3D, hit_pos: Vector3, dir: Vector3, speed: float) -> Ar
 			release(p, v)
 			out.append(p)
 	return out
+
+# ------------------------------------------------------------- targets / markers
+static func region_of(pos: Vector3) -> String:
+	var a: float = rad_to_deg(atan2(pos.z, maxf(pos.x, 1.0)))
+	if a <= -35.0: return "far_left"
+	if a <= -12.0: return "left_center"
+	if a < 12.0: return "center"
+	if a < 35.0: return "right_center"
+	return "far_right"
+
+## Registers a slingshot target (+ floating value marker). Returns the bonus record.
+func _target(key: String, nm: String, pts: int, pos: Vector3) -> Dictionary:
+	var t := {"key": key, "name": nm, "pts": pts, "pos": pos, "region": Town.region_of(pos)}
+	targets.append(t)
+	if not legacy:
+		var l := Label3D.new()
+		l.text = "%d" % pts
+		l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		l.fixed_size = true
+		l.pixel_size = 0.0010
+		l.font_size = 40
+		l.outline_size = 12
+		l.no_depth_test = true
+		l.modulate = Color(0.95, 0.62, 0.3) if pts < 200 else (Color(0.85, 0.92, 1.0) if pts < 500 else (Color(1.0, 0.86, 0.2) if pts < 1000 else Color(1.0, 0.45, 0.95)))
+		l.position = pos + Vector3(0, 3.2, 0)
+		add_child(l)
+	return t
+
+func _bonus(body: Node, key: String, nm: String, pts: int) -> void:
+	var pos: Vector3 = (body as Node3D).position
+	var t := _target(key, nm, pts, pos)
+	body.set_meta("bonus", {"name": nm, "pts": pts, "key": key})
+
+# ------------------------------------------------------- expanded playground
+func _building(ox: int, oz: int, w: int, d: int, floors: int, group: String, fort: bool, roof: bool, window_floor: int) -> RigidBody3D:
+	var win: RigidBody3D = null
+	for f in floors:
+		for i in w:
+			for j in d:
+				var is_win: bool = (i == 0 and f == window_floor and j == d / 2)
+				var model: String = ("wall-fortified-window" if fort else "wall-window") if is_win else ("wall-fortified" if fort else "wall")
+				var p := _piece(model, Vector3(ox + i, f, oz + j), "wall", group, Vector3.ONE, 3.0, 3.0 if is_win else 6.5)
+				if is_win:
+					win = p
+	if roof:
+		for i in w:
+			for j in d:
+				_piece("roof", Vector3(ox + i, floors, oz + j), "roof", group, Vector3.ONE, 2.5, 5.5)
+	return win
+
+func _tower_stack(tx: int, tz: int, n: int, group: String) -> RigidBody3D:
+	var top: RigidBody3D = null
+	for i in n:
+		var nm: String = "tower-base" if i == 0 else ("tower-top" if i == n - 1 else "tower")
+		var p := _piece(nm, Vector3(tx, i, tz), "tower", group, Vector3.ONE, 4.0, 4.0)
+		p.set_meta("group_all", true)
+		top = p
+	return top
+
+func _chimney_stack(tx: float, ty: float, tz: float, n: int, group: String) -> RigidBody3D:
+	var top: RigidBody3D = null
+	for i in n:
+		var c := _piece("column", Vector3(tx, ty + i * 1.0, tz), "column", group, Vector3(0.4, 1.0, 0.4), 1.0, 3.5)
+		c.set_meta("group_all", true)
+		top = c
+	return top
+
+func _static_box(pos: Vector3, size: Vector3, color: Color, visual: bool = true) -> StaticBody3D:
+	var b := StaticBody3D.new()
+	b.collision_layer = 1
+	b.collision_mask = 0
+	b.physics_material_override = _phys_stone
+	b.position = pos
+	var cs := CollisionShape3D.new()
+	var sh := BoxShape3D.new()
+	sh.size = size
+	cs.shape = sh
+	b.add_child(cs)
+	if visual:
+		b.add_child(_box_mesh(size, color))
+	add_child(b)
+	return b
+
+func _crate_pyramid(x: float, z: float, rows: int) -> void:
+	var cs: float = 0.75
+	for row in rows:
+		var n: int = rows - row
+		for i in n:
+			var off: float = (i - (n - 1) * 0.5) * (cs + 0.02)
+			_prop("detail-crate", Vector3(x, row * cs + 0.001, z + off), Vector3(cs, cs, cs), 1.6)
+
+func _fortress() -> void:
+	# LEFT-CENTER: stone block with a window, and a bell tower on its corner
+	var win := _building(30, -19, 3, 4, 2, "fortress", true, false, 1)
+	_bonus(win, "fort_window", "Fortress Window", 400)
+	var top := _tower_stack(33, -20, 5, "bell")
+	_bonus(top, "bell", "Bell Tower", 550)
+	_crate_pyramid(40.0, -20.0, 3)
+
+func _barn_yard() -> void:
+	# RIGHT-CENTER: barn, very tall chimney, crate pyramid and a heavy barrel pile
+	_building(28, 15, 3, 2, 1, "barn", false, true, -1)
+	var top := _chimney_stack(29.0, 2.0, 15.0, 6, "tallchimney")
+	_bonus(top, "tall_chimney", "Tall Chimney", 450)
+	_crate_pyramid(40.0, 27.0, 4)
+	var heavy := _prop("barrels", Vector3(37.0, 0.0, 21.0), Vector3(1.5, 1.23, 0.75), 14.0, PROP_S)
+	_bonus(heavy, "barrels", "Barrel Yard", 300)
+	for i in 3:
+		_prop("detail-barrel", Vector3(34.0 + i * 0.9, 0.0, 30.0), Vector3(0.62, 0.75, 0.62), 2.0)
+
+func _watch_village() -> void:
+	# FAR-LEFT: a tall watchtower and a couple of cottages
+	var top := _tower_stack(48, -38, 8, "watch")
+	_bonus(top, "watchtower", "Watchtower", 900)
+	_building(45, -33, 2, 2, 1, "cottageL", false, true, -1)
+	_building(51, -41, 2, 2, 1, "cottageL2", false, true, -1)
+
+func _harbor() -> void:
+	# FAR-RIGHT: lighthouse, shed, docks over water
+	var top := _tower_stack(46, 36, 9, "lighthouse")
+	_bonus(top, "lighthouse", "Lighthouse", 900)
+	_building(43, 31, 2, 2, 1, "shed", false, true, -1)
+	var water := _box_mesh(Vector3(26.0, 0.05, 16.0), Color(0.2, 0.45, 0.8))
+	water.position = Vector3(76.0, 0.04, 66.0)
+	add_child(water)
+	for i in 8:
+		_static_kit("wood-floor", Vector3(44 + i, 0.0, 41), Vector3(1.0, 0.125, 1.0))
+	_crate_pyramid(63.0, 49.0, 3)
+
+func _gate(key: String, nm: String, pts: int, tx: int, reach: int) -> void:
+	for f in 3:
+		for z in range(2, reach):
+			_static_kit("wall-fortified", Vector3(tx, f, z))
+			_static_kit("wall-fortified", Vector3(tx, f, -z))
+	var gx: float = float(tx) * S
+	gaps.append({"key": key, "name": nm, "pts": pts, "x": gx, "half": 2.2, "ymax": 6.5})
+	_target(key, nm, pts, Vector3(gx, 2.5, 0.0))
+
+func _gate_and_keep() -> void:
+	# CENTER-FAR: a narrow gate you can thread ("Needle Gap") and the distant keep wall
+	_gate("needle", "Needle Gap", 800, 50, 8)
+	var win := _building(57, -4, 1, 9, 2, "keep", true, false, 1)
+	_bonus(win, "keep_window", "Keep Window", 1200)
+
+func _perimeter() -> void:
+	# stone boundary walls (collider extends high so nothing can leave the field)
+	var col := Color(0.46, 0.46, 0.5)
+	_static_box(Vector3(WORLD_X_MAX, 30.0, 0.0), Vector3(2.0, 60.0, WORLD_Z * 2.0 + 4.0), col, false)
+	_static_box(Vector3(WORLD_X_MAX, 2.0, 0.0), Vector3(2.0, 4.0, WORLD_Z * 2.0 + 4.0), col)
+	_static_box(Vector3(WORLD_X_MIN, 30.0, 0.0), Vector3(2.0, 60.0, WORLD_Z * 2.0 + 4.0), col, false)
+	for sgn in [-1.0, 1.0]:
+		_static_box(Vector3((WORLD_X_MAX + WORLD_X_MIN) * 0.5, 30.0, sgn * WORLD_Z), Vector3(WORLD_X_MAX - WORLD_X_MIN, 60.0, 2.0), col, false)
+		_static_box(Vector3((WORLD_X_MAX + WORLD_X_MIN) * 0.5, 2.0, sgn * WORLD_Z), Vector3(WORLD_X_MAX - WORLD_X_MIN, 4.0, 2.0), col)
+
+func _tree(s: Vector3) -> void:
+	var t := StaticBody3D.new()
+	t.collision_layer = 1
+	t.collision_mask = 0
+	t.position = s
+	var cs := CollisionShape3D.new()
+	var sh := CylinderShape3D.new()
+	sh.radius = 0.4
+	sh.height = 2.4
+	cs.shape = sh
+	cs.position = Vector3(0, 1.2, 0)
+	t.add_child(cs)
+	var m := _kit("tree-large")
+	m.scale = Vector3.ONE * 2.2
+	t.add_child(m)
+	add_child(t)
+
+# ------------------------------------------------------ bounded active physics
+func _physics_process(dt: float) -> void:
+	_cap_timer += dt
+	if _cap_timer >= 0.5:
+		_cap_timer = 0.0
+		enforce_active_cap()
+
+func active_released() -> int:
+	var n: int = 0
+	for p in released_order:
+		if is_instance_valid(p) and not p.freeze:
+			n += 1
+	return n
+
+## Re-freeze the oldest settled released pieces so the simulation stays bounded.
+func enforce_active_cap() -> void:
+	if active_released() <= ACTIVE_CAP:
+		return
+	for p in released_order:
+		if active_released() <= ACTIVE_CAP:
+			break
+		if is_instance_valid(p) and not p.freeze and p.linear_velocity.length() < 1.0:
+			p.set_meta("capped", true)
+			p.freeze = true
+
+## Mid-field cottages, low walls and crate piles so the lateral zones are not empty grass.
+func _filler() -> void:
+	var cottages := [Vector2i(12, -8), Vector2i(20, -12), Vector2i(36, -14), Vector2i(42, -8), Vector2i(58, -20), Vector2i(62, -30),
+		Vector2i(20, -30), Vector2i(8, -18), Vector2i(12, 8), Vector2i(18, 16), Vector2i(34, 10), Vector2i(42, 8), Vector2i(54, 18),
+		Vector2i(60, 26), Vector2i(20, 28), Vector2i(10, 20), Vector2i(50, -30), Vector2i(52, 30)]
+	var n := 0
+	for c in cottages:
+		_building(c.x, c.y, 2, 1, 1, "cot%d" % n, n % 3 == 0, true, -1)
+		n += 1
+	var walls := [Vector3i(26, -6, 5), Vector3i(26, 3, 4), Vector3i(48, -24, 4), Vector3i(48, 18, 5), Vector3i(64, 12, 4), Vector3i(64, -14, 4)]
+	for w in walls:
+		_building(w.x, w.y, 1, w.z, 1, "wallrun%d" % n, true, false, -1)
+		n += 1
+	for sp in [Vector2(30.0, -34.0), Vector2(56.0, -44.0), Vector2(30.0, 38.0), Vector2(58.0, 44.0), Vector2(90.0, -20.0), Vector2(92.0, 22.0)]:
+		_crate_pyramid(sp.x, sp.y, 2)
+
+## Fast reset: put every piece/prop back where it was instead of rebuilding ~400 nodes.
+func reset_in_place() -> void:
+	for p in pieces:
+		p.freeze_mode = RigidBody3D.FREEZE_MODE_STATIC
+		p.freeze = true
+		p.remove_meta("capped")
+		p.linear_velocity = Vector3.ZERO
+		p.angular_velocity = Vector3.ZERO
+		p.global_transform = Transform3D(Basis.IDENTITY, p.get_meta("rest"))
+	for b in props:
+		b.linear_velocity = Vector3.ZERO
+		b.angular_velocity = Vector3.ZERO
+		b.global_transform = Transform3D(Basis.IDENTITY, b.get_meta("rest"))
+		b.sleeping = true
+	released_order.clear()
+
+# ------------------------------------------------------------ the deep city (60-200 m)
+func _reserve(x0: float, z0: float, x1: float, z1: float) -> void:
+	_reserved.append(Rect2(Vector2(minf(x0, x1), minf(z0, z1)), Vector2(absf(x1 - x0), absf(z1 - z0))))
+
+func _is_reserved(x: float, z: float, pad: float) -> bool:
+	for r in _reserved:
+		if (r as Rect2).grow(pad).has_point(Vector2(x, z)):
+			return true
+	return false
+
+func _deep_city() -> void:
+	# keep-out zones (meters) for everything hand-placed, so the decorative city never overlaps it
+	for r in [[8, -16, 62, 16], [38, -36, 56, -16], [34, 14, 52, 36], [60, -68, 84, -36], [56, 26, 92, 74], [64, -14, 96, 14],
+			[110, -76, 160, -34], [110, 34, 160, 80], [150, -26, 200, 26], [128, -50, 146, -28], [128, 26, 146, 48], [138, -110, 166, -76], [138, 76, 166, 112]]:
+		_reserve(r[0], r[1], r[2], r[3])
+	# --- LEFT-CENTER, far: old mill tower
+	var mill := _tower_stack(87, -23, 7, "mill")
+	_bonus(mill, "mill", "Old Mill", 1000)
+	_building(84, -20, 2, 2, 1, "millhouse", false, true, -1)
+	# --- RIGHT-CENTER, far: grain silo
+	var silo := _tower_stack(90, 26, 7, "silo")
+	_bonus(silo, "silo", "Grain Silo", 1000)
+	_building(86, 23, 2, 2, 1, "siloshed", true, true, -1)
+	# --- FAR-LEFT: cliff watch (mid-depth) and the monastery spire (deep)
+	var cw := _tower_stack(80, -40, 8, "cliff")
+	_bonus(cw, "cliff_watch", "Cliff Watch", 1100)
+	_building(76, -36, 3, 2, 2, "cliffhall", true, false, 1)
+	var sp := _tower_stack(100, -60, 11, "spire")
+	_bonus(sp, "spire", "Monastery Spire", 1500)
+	_building(95, -64, 3, 3, 2, "abbey", true, false, 1)
+	_building(104, -56, 2, 2, 1, "abbey2", false, true, -1)
+	# --- FAR-RIGHT: harbor crane (mid-depth) and the port lighthouse (deep)
+	var cr := _tower_stack(84, 38, 7, "crane")
+	_bonus(cr, "crane", "Harbor Crane", 1100)
+	var lh := _tower_stack(100, 56, 11, "portlight")
+	_bonus(lh, "portlight", "Port Lighthouse", 1500)
+	_building(94, 52, 3, 3, 2, "customs", true, false, 1)
+	_building(104, 60, 2, 2, 1, "warehouse", false, true, -1)
+	var water := _box_mesh(Vector3(52.0, 0.05, 36.0), Color(0.2, 0.45, 0.8))
+	water.position = Vector3(150.0, 0.04, 98.0)
+	add_child(water)
+	for i in 12:
+		_static_kit("wood-floor", Vector3(100 + i, 0.0, 66), Vector3(1.0, 0.125, 1.0))
+	_crate_pyramid(138.0, 70.0, 4)
+	_crate_pyramid(144.0, -72.0, 4)
+	# --- FAR-CENTER: the grand castle
+	_gate("grand_gate", "Grand Gate", 1600, 110, 10)
+	for i in 4:
+		_crate_pyramid(168.0, -10.0 + i * 7.0, 3)
+	var wall_win := _building(118, -8, 1, 17, 3, "castle", true, false, 2)
+	_bonus(wall_win, "castle_window", "Castle Window", 1800)
+	var crown := _tower_stack(126, 0, 13, "crown")
+	_bonus(crown, "crown", "Castle Crown", 2500)
+	_tower_stack(118, -10, 6, "ctowerL")
+	_tower_stack(118, 10, 6, "ctowerR")
+	_ring("far_ring", "Far Bullseye", Vector2(130.0, -14.0), 9.0, 1000)
+	# --- extra mid-depth cover: wall runs and crate piles
+	for w in [Vector3i(70, -14, 5), Vector3i(70, 12, 5), Vector3i(96, -6, 6), Vector3i(96, 2, 5)]:
+		_building(w.x, w.y, 1, w.z, 2, "deepwall%d_%d" % [w.x, w.y], true, false, -1)
+
+# decorative (non-breakable) city: ONE MultiMesh per mesh type + ONE static body of box shapes
+func _decor_cottage(x: float, z: float, yaw: float) -> void:
+	var bas := Basis(Vector3.UP, yaw)
+	var sc := Basis.from_scale(Vector3.ONE * S)
+	for i in 2:
+		var pos: Vector3 = Vector3(x, 0.0, z) + bas * Vector3((float(i) - 0.5) * S, 0.0, 0.0)
+		_decor_walls.append(Transform3D(bas * sc, pos))
+		_decor_roofs.append(Transform3D(bas * sc, pos + Vector3(0, S, 0)))
+	var cs := CollisionShape3D.new()
+	var sh := BoxShape3D.new()
+	sh.size = Vector3(2.0 * S, 2.0 * S, S)
+	cs.shape = sh
+	cs.transform = Transform3D(bas, Vector3(x, S, z))
+	_decor_body.add_child(cs)
+
+func _decor_tree(x: float, z: float) -> void:
+	_decor_trees.append(Transform3D(Basis.from_scale(Vector3.ONE * 2.2), Vector3(x, 0, z)))
+	var cs := CollisionShape3D.new()
+	var sh := CylinderShape3D.new()
+	sh.radius = 0.5
+	sh.height = 2.6
+	cs.shape = sh
+	cs.position = Vector3(x, 1.3, z)
+	_decor_body.add_child(cs)
+
+func _mesh_of(model: String) -> Mesh:
+	var inst := _kit(model)
+	var mi := inst.find_children("*", "MeshInstance3D", true, false)[0] as MeshInstance3D
+	var mesh: Mesh = mi.mesh
+	inst.free()
+	return mesh
+
+func _multimesh(mesh: Mesh, xfs: Array[Transform3D]) -> void:
+	if xfs.is_empty():
+		return
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = mesh
+	mm.instance_count = xfs.size()
+	for i in xfs.size():
+		mm.set_instance_transform(i, xfs[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	add_child(mmi)
+
+func _decor_city() -> void:
+	_decor_body = StaticBody3D.new()
+	_decor_body.collision_layer = 1
+	_decor_body.collision_mask = 0
+	_decor_body.physics_material_override = _phys_stone
+	add_child(_decor_body)
+	var n := 0
+	var ix := 0
+	for xi in range(18, 214, 12):
+		var iz := 0
+		for zi in range(-124, 125, 12):
+			var jitter := Vector2(float((ix * 7 + iz * 13) % 5) - 2.0, float((ix * 11 + iz * 5) % 5) - 2.0) * 1.2
+			var x: float = float(xi) + jitter.x
+			var z: float = float(zi) + jitter.y
+			iz += 1
+			if absf(z) < 6.0 and x > 0.0:                 # the main road stays clear
+				continue
+			if _is_reserved(x, z, 3.0):
+				continue
+			var kind: int = (ix * 3 + iz * 5) % 7
+			if kind < 4:
+				_decor_cottage(x, z, (PI * 0.5) if (kind % 2 == 1) else 0.0)
+				n += 1
+			elif kind < 6:
+				_decor_tree(x, z)
+		ix += 1
+	_multimesh(_mesh_of("wall"), _decor_walls)
+	_multimesh(_mesh_of("roof"), _decor_roofs)
+	_multimesh(_mesh_of("tree-large"), _decor_trees)
