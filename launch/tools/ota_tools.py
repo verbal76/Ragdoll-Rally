@@ -8,7 +8,7 @@
 import argparse, hashlib, json, os, re, sys, time
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))   # launch/
-ENGINE = "godot-4.4.1"
+ENGINE = "godot-4.7.1"
 
 def boundary_files():
     out = []
@@ -34,14 +34,14 @@ def fingerprint():
         h.update(b"\0F:" + rel.encode())
         h.update(open(os.path.join(ROOT, rel), "rb").read())
     h.update(b"\0C:" + ",".join(class_names()).encode())   # new class_name => native change
-    return "r1-" + h.hexdigest()[:12]
+    return "r2-" + h.hexdigest()[:12]
 
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("fingerprint")
     b = sub.add_parser("build-info")
-    for a in ["out", "version-name", "version-code", "sha", "run", "channel", "target-sdk", "min-sdk", "manifest-url", "signing", "build-type"]:
+    for a in ["out", "version-name", "version-code", "sha", "run", "channel", "target-sdk", "min-sdk", "compile-sdk", "generation", "manifest-url", "signing", "build-type"]:
         b.add_argument("--" + a, default="")
     m = sub.add_parser("manifest")
     for a in ["out", "pck", "id", "name", "sequence", "sha", "channel", "url", "min-version-code"]:
@@ -55,7 +55,7 @@ def main():
             "version_name": a.version_name, "version_code": int(a.version_code or 0), "source_sha": a.sha,
             "run_number": int(a.run or 0), "build_type": a.build_type or "debug", "channel": a.channel or "poc",
             "min_sdk": a.min_sdk or "unknown", "target_sdk": a.target_sdk or "unknown",
-            "compile_sdk": "n/a (prebuilt export template)", "signing": a.signing or "debug (throwaway key; not Play-ready)",
+            "compile_sdk": a.compile_sdk or "unknown", "generation": a.generation or "g1", "signing": a.signing or "debug (throwaway key; not Play-ready)",
             "runtime_compat": fingerprint(), "play_required_target_api": 36, "play_required_verified": "2026-10-03",
             "ota_enabled": bool(a.manifest_url), "ota_manifest_url": a.manifest_url,
             "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

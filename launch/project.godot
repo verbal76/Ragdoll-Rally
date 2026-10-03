@@ -5,7 +5,7 @@ config_version=5
 
 config/name="Ragdoll Rally: Launch"
 run/main_scene="res://scenes/boot.tscn"
-config/features=PackedStringArray("4.4", "GL Compatibility")
+config/features=PackedStringArray("4.7", "GL Compatibility")
 run/max_fps=60
 config/icon="res://icon.svg"
 boot_splash/bg_color=Color(0, 0, 0, 1)

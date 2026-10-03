@@ -4,7 +4,7 @@ name: Launch OTA publish
 # on their next launch, so it is never triggered automatically.
 on:
   push:
-    branches: [ccr-7c0d7291-e3d5o1]
+    branches: [claude/launch-api36-modernization]
     paths:
       - 'launch/ota/publish_request.json'   # committing this file IS the authorization to publish
   workflow_dispatch:
@@ -21,7 +21,7 @@ permissions:
   contents: write
 
 env:
-  GODOT_BASE: https://github.com/godotengine/godot/releases/download/4.4.1-stable
+  GODOT_BASE: https://github.com/godotengine/godot/releases/download/4.7.1-stable
 
 jobs:
   publish:
@@ -32,9 +32,9 @@ jobs:
 
       - name: Download Godot (no export templates needed for a PCK)
         run: |
-          curl -fsSL -o godot.zip "$GODOT_BASE/Godot_v4.4.1-stable_linux.x86_64.zip"
+          curl -fsSL -o godot.zip "$GODOT_BASE/Godot_v4.7.1-stable_linux.x86_64.zip"
           unzip -o -q godot.zip
-          sudo install -m 755 Godot_v4.4.1-stable_linux.x86_64 /usr/local/bin/godot
+          sudo install -m 755 Godot_v4.7.1-stable_linux.x86_64 /usr/local/bin/godot
 
       - name: Import + test
         run: |

@@ -118,7 +118,7 @@ static func diagnostics_text(ota: Node) -> String:
 	L.append("  Package: %s" % str(info.get("package_id")))
 	L.append("  Version: %s" % str(info.get("version_name")))
 	L.append("  Version code (native build): %s" % str(info.get("version_code")))
-	L.append("  Native/runtime: Godot %s ; runtime-compat %s" % [Engine.get_version_info().get("string", "?"), str(info.get("runtime_compat"))])
+	L.append("  Native/runtime: Godot %s ; runtime-compat %s ; native generation %s" % [Engine.get_version_info().get("string", "?"), str(info.get("runtime_compat")), str(info.get("generation", "?"))])
 	L.append("  Source commit: %s" % str(info.get("source_sha")))
 	L.append("  Build: %s ; CI run %s ; built %s" % [str(info.get("build_type")), str(info.get("run_number")), str(info.get("built_at"))])
 	L.append("OTA")
