@@ -3,6 +3,10 @@ name: Launch OTA publish
 # MANUAL ONLY. Publishing an OTA makes installed apps on that channel discover it
 # on their next launch, so it is never triggered automatically.
 on:
+  push:
+    branches: [ccr-7c0d7291-e3d5o1]
+    paths:
+      - 'launch/ota/publish_request.json'   # committing this file IS the authorization to publish
   workflow_dispatch:
     inputs:
       name:
@@ -38,19 +42,32 @@ jobs:
           godot --headless --path launch -s tests/verify.gd
           godot --headless --path launch -s tests/verify_ota.gd
 
+      - name: Resolve request (dispatch inputs or publish_request.json)
+        id: req
+        env:
+          IN_NAME: ${{ github.event.inputs.name }}
+          IN_CH: ${{ github.event.inputs.channel }}
+        run: |
+          if [ -n "$IN_NAME" ]; then NAME="$IN_NAME"; CH="$IN_CH"; else
+            NAME=$(python3 -c "import json;print(json.load(open('launch/ota/publish_request.json'))['name'])")
+            CH=$(python3 -c "import json;print(json.load(open('launch/ota/publish_request.json'))['channel'])")
+          fi
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "channel=$CH" >> "$GITHUB_OUTPUT"
+
       - name: Build OTA pack + manifest
         id: pack
         run: |
           SHA7=$(echo "$GITHUB_SHA" | cut -c1-7)
           SEQ=${{ github.run_number }}
-          CH="${{ github.event.inputs.channel }}"
+          CH="${{ steps.req.outputs.channel }}"
           ID="${CH}-${SEQ}-${SHA7}"
           mkdir -p out
           godot --headless --path launch --export-pack "Launch OTA Pack" "$GITHUB_WORKSPACE/out/launch-ota-${ID}.pck"
           test -s "out/launch-ota-${ID}.pck"
           URL="https://github.com/${{ github.repository }}/releases/download/launch-ota-${ID}/launch-ota-${ID}.pck"
           python3 launch/tools/ota_tools.py manifest --out out/manifest.json --pck "out/launch-ota-${ID}.pck" \
-            --id "$ID" --name "${{ github.event.inputs.name }}" --sequence "$SEQ" --sha "$GITHUB_SHA" \
+            --id "$ID" --name "${{ steps.req.outputs.name }}" --sequence "$SEQ" --sha "$GITHUB_SHA" \
             --channel "$CH" --url "$URL"
           cat out/manifest.json
           echo "id=$ID" >> "$GITHUB_OUTPUT"
@@ -63,7 +80,7 @@ jobs:
           ID="${{ steps.pack.outputs.id }}"
           CH="${{ steps.pack.outputs.channel }}"
           gh release create "launch-ota-${ID}" "out/launch-ota-${ID}.pck" "out/manifest.json" \
-            --title "Launch OTA ${ID}: ${{ github.event.inputs.name }}" --prerelease \
+            --title "Launch OTA ${ID} - ${{ steps.req.outputs.name }}" --prerelease \
             --notes "OTA payload. Commit ${GITHUB_SHA}. Channel ${CH}. Applies only to native builds whose runtime_compat matches manifest.json." \
             --target "$GITHUB_SHA"
           POINTER="launch-ota-channel-${CH}"
