@@ -19,7 +19,8 @@ const OVERDRIVE_MAX := 1.45       # pull past the old full-power point (1.0) for
 const OVERDRIVE_SPEED := 56.0     # launch speed at full overdrive (old maximum 32.0 is reached at power 1.0)
 const MIN_MARGIN := Vector2(40.0, 30.0)
 const SKID_ACCEL := 6.0           # m/s^2 pushed along the ground velocity so the ragdoll skids through things
-const SKID_MAX_SPEED := 36.0
+const SKID_MAX_SPEED := 22.0       # assist tapers to nothing at this ground speed (no runaway)
+var _skid_dir := Vector3.RIGHT      # horizontal launch heading; the assist only ever pushes forward along it
 const MAX_UPGRADE := 5
 const UPGRADE_COST := [300, 600, 1000, 1600, 2500]
 const SKIP_AFTER_S := 1.5
@@ -623,6 +624,7 @@ func fire() -> void:
 	if state != State.AIM:
 		return
 	state = State.FLIGHT
+	_skid_dir = Vector3(aim_dir.x, 0.0, aim_dir.z).normalized()
 	t_launch = 0.0
 	flight_t = 0.0
 	for d in _dots:
@@ -689,6 +691,15 @@ func _on_impact(part: RigidBody3D, other: Node, speed: float, pos: Vector3) -> v
 				scoring.award("demo_%d" % town.decor_smashed, "DEMOLITION x%d" % town.decor_smashed, town.decor_smashed * 10, "Impacts", pos)
 	elif other.has_meta("ground") and not _landed and speed > 3.0:
 		_landed = true
+		if not classic:
+			# arcade: the first touchdown keeps most of the forward speed so it skids on instead of dead-stopping
+			var pv: Vector3 = ragdoll.prev_velocity(part)
+			var hv := Vector3(pv.x, 0.0, pv.z) * (0.62 + 0.02 * up_power)
+			for bd in ragdoll.bodies:
+				var cv: Vector3 = bd.linear_velocity
+				var tv := Vector3(hv.x, cv.y, hv.z)
+				if Vector2(cv.x, cv.z).length() < hv.length():
+					bd.linear_velocity = cv.lerp(tv, 0.8)
 		var ra: Dictionary = town.ring_award(pos)
 		if not ra.is_empty():
 			scoring.award(str(ra["key"]), str(ra["name"]), int(ra["pts"]), "Targets", pos)
@@ -817,14 +828,16 @@ func _physics_process(dt: float) -> void:
 
 ## Arcade assist: keeps pushing along the ground velocity so the ragdoll skids through things instead of rolling to a stop.
 func _skid(dt: float) -> void:
+	if ragdoll.torso.global_position.y >= 2.8:
+		return
 	var v: Vector3 = ragdoll.torso.linear_velocity
-	var vh := Vector3(v.x, 0.0, v.z)
-	var sp: float = vh.length()
-	if sp > 3.0 and sp < SKID_MAX_SPEED and ragdoll.torso.global_position.y < 1.7:
-		var accel: float = SKID_ACCEL + 1.2 * float(up_power)
-		var dirv: Vector3 = vh / sp
-		for bd in ragdoll.bodies:
-			bd.apply_central_impulse(dirv * accel * dt * bd.mass)
+	var fwd: float = v.x * _skid_dir.x + v.z * _skid_dir.z
+	# only while still travelling forward; taper out so it can never run away or push backwards
+	if fwd < 1.5 or fwd >= SKID_MAX_SPEED:
+		return
+	var accel: float = (SKID_ACCEL + 1.2 * float(up_power)) * (1.0 - fwd / SKID_MAX_SPEED)
+	for bd in ragdoll.bodies:
+		bd.apply_central_impulse(_skid_dir * accel * dt * bd.mass)
 
 func _finish() -> void:
 	if state == State.RESULT:

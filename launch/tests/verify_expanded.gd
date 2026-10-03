@@ -60,6 +60,8 @@ func _rollout(main: Node, cls: bool) -> float:
 	main.force_rebuild = true
 	main.reset()
 	await frames(2)
+	for o in main.town.pieces + main.town.props:
+		o.collision_layer = 0          # truly open ground: the legacy village would otherwise stop some shots dead
 	_aim(main, 0.12, 0.0)
 	main.aim_power = 0.55
 	main.fire()
