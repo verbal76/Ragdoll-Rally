@@ -7,6 +7,7 @@ extends Control
 var main_ref: Node
 var _settings: PanelContainer
 var _view_btn: Button
+var _gear: Button
 var _about: PanelContainer
 var _about_label: Label
 
@@ -19,10 +20,8 @@ func _ready() -> void:
 	gear.add_theme_font_size_override("font_size", 40)
 	gear.custom_minimum_size = Vector2(90, 80)
 	gear.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	gear.offset_left = -106
-	gear.offset_top = -96
-	gear.offset_right = -16
-	gear.offset_bottom = -16
+	_gear = gear
+	relayout(Vector4(40, 30, 40, 30))
 	gear.pressed.connect(func():
 		_refresh_view_btn()
 		_settings.visible = true)
@@ -96,6 +95,15 @@ func _button(text: String, cb: Callable) -> Button:
 
 func _ota() -> Node:
 	return get_node_or_null("/root/Ota")
+
+## Called with the safe-area margins (left, top, right, bottom) so the gear is never off-screen.
+func relayout(m: Vector4) -> void:
+	if _gear == null:
+		return
+	_gear.offset_left = -m.z - 90.0
+	_gear.offset_right = -m.z
+	_gear.offset_top = -m.w - 80.0
+	_gear.offset_bottom = -m.w
 
 func _toggle_view() -> void:
 	if main_ref and main_ref.has_method("set_view_right"):

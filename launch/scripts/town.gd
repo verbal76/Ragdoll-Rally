@@ -12,11 +12,9 @@ const PROP_S := 2.5     # detail props are tiny in the kit
 const POLE_TOP := Vector3(0.0, 3.4, 0.0)
 const POLE_Z := 1.7
 const WORLD_X_MIN := -25.0
-const WORLD_X_MAX := 112.0
-const WORLD_Z := 80.0
+const WORLD_X_MAX := 215.0
+const WORLD_Z := 130.0
 const ACTIVE_CAP := 90          # max simultaneously simulated released pieces
-const GAP_X := 75.0             # "Needle Gap" plane
-const GAP_HALF := 2.2
 
 var pieces: Array[RigidBody3D] = []
 var props: Array[RigidBody3D] = []
@@ -28,17 +26,17 @@ var band_r: MeshInstance3D
 var targets: Array[Dictionary] = []     # {key, name, pts, pos, region}
 var released_order: Array[RigidBody3D] = []
 var legacy: bool = false                # tests: original small village only
-var bullseye: Vector2 = Vector2(68.0, 14.0)
-var bullseye_inner: float = 2.2
-var bullseye_outer: float = 6.5
+var rings: Array[Dictionary] = []       # landing rings {key, name, center: Vector2, r, base}
+var gaps: Array[Dictionary] = []        # thread-the-gap targets {key, name, pts, x, half, ymax}
+var _reserved: Array[Rect2] = []        # keep-out zones for the decorative city
+var _decor_walls: Array[Transform3D] = []
+var _decor_roofs: Array[Transform3D] = []
+var _decor_trees: Array[Transform3D] = []
+var _decor_body: StaticBody3D
 var _cap_timer: float = 0.0
 
 func build(p_legacy: bool = false) -> void:
 	legacy = p_legacy
-	if legacy:
-		bullseye = Vector2(58.0, 0.0)
-		bullseye_inner = 2.5
-		bullseye_outer = 8.0
 	_phys_stone.friction = 0.8
 	_phys_stone.bounce = 0.12
 	_ground()
@@ -58,8 +56,9 @@ func build(p_legacy: bool = false) -> void:
 		_harbor()
 		_gate_and_keep()
 		_filler()
+		_deep_city()
 		_perimeter()
-		_outskirts()
+		_decor_city()
 
 # ------------------------------------------------------------------ helpers
 func _kit(model: String) -> Node3D:
@@ -94,17 +93,17 @@ func _ground() -> void:
 	g.physics_material_override = pm
 	var cs := CollisionShape3D.new()
 	var sh := BoxShape3D.new()
-	var gsz := Vector3(300, 2, 120) if legacy else Vector3(300, 2, 220)
+	var gsz := Vector3(300, 2, 120) if legacy else Vector3(460, 2, 340)
 	sh.size = gsz
 	cs.shape = sh
 	g.add_child(cs)
-	g.position = Vector3(80, -1, 0) if legacy else Vector3(50, -1, 0)
+	g.position = Vector3(80, -1, 0) if legacy else Vector3(95, -1, 0)
 	var vis := _box_mesh(gsz, Color(0.40, 0.66, 0.34))
 	g.add_child(vis)
 	add_child(g)
 	# cobble road strip so the town reads as a place
-	var road := _box_mesh(Vector3(70 if legacy else 125, 0.05, 6), Color(0.62, 0.58, 0.5))
-	road.position = Vector3(36 if legacy else 62, 0.02, 0)
+	var road := _box_mesh(Vector3(70 if legacy else 230, 0.05, 6), Color(0.62, 0.58, 0.5))
+	road.position = Vector3(36 if legacy else 90, 0.02, 0)
 	add_child(road)
 
 func _launcher() -> void:
@@ -322,19 +321,40 @@ func _scenery() -> void:
 		add_child(t)
 
 func _bullseye() -> void:
-	var cols := [Color(0.9, 0.15, 0.15), Color(0.97, 0.97, 0.97), Color(0.9, 0.15, 0.15), Color(0.97, 0.97, 0.97)]
-	for i in 4:
+	if legacy:
+		_ring("bullseye", "Bullseye", Vector2(58.0, 0.0), 8.0, 500)
+	else:
+		_ring("bullseye", "Bullseye", Vector2(68.0, 14.0), 7.5, 500)
+
+## A landing target: concentric rings; the closer to the centre the ground contact, the more it pays
+## (dead centre x2, inner x1, middle x0.5, outer x0.3 of `base`).
+func _ring(key: String, nm: String, center: Vector2, r: float, base: int) -> void:
+	rings.append({"key": key, "name": nm, "center": center, "r": r, "base": base})
+	var cols := [Color(0.9, 0.15, 0.15), Color(0.97, 0.97, 0.97), Color(0.9, 0.15, 0.15), Color(0.97, 0.97, 0.97), Color(1.0, 0.85, 0.1)]
+	var fr := [1.0, 0.7, 0.4, 0.17, 0.08]
+	for i in 5:
 		var d := MeshInstance3D.new()
 		var cm := CylinderMesh.new()
-		var r: float = bullseye_outer * (1.0 - 0.25 * i)
-		cm.top_radius = r
-		cm.bottom_radius = r
+		var rr: float = r * float(fr[i])
+		cm.top_radius = rr
+		cm.bottom_radius = rr
 		cm.height = 0.04
 		cm.material = _mat(cols[i])
 		d.mesh = cm
-		d.position = Vector3(bullseye.x, 0.03 + i * 0.01, bullseye.y)
+		d.position = Vector3(center.x, 0.03 + i * 0.01, center.y)
 		add_child(d)
-	_target("bullseye", "Bullseye", 500, Vector3(bullseye.x, 0.5, bullseye.y))
+	_target(key, nm, base, Vector3(center.x, 0.5, center.y))
+
+## Points for a ground contact at `pos` (0 = outside every ring) and the ring record.
+func ring_award(pos: Vector3) -> Dictionary:
+	for rg in rings:
+		var d: float = Vector2(pos.x - (rg["center"] as Vector2).x, pos.z - (rg["center"] as Vector2).y).length()
+		var f: float = d / float(rg["r"])
+		if f <= 1.0:
+			var mult: float = 2.0 if f <= 0.17 else (1.0 if f <= 0.4 else (0.5 if f <= 0.7 else 0.3))
+			var nm: String = "DEAD CENTRE " + str(rg["name"]) if f <= 0.17 else str(rg["name"])
+			return {"key": rg["key"], "name": nm, "pts": int(float(rg["base"]) * mult), "dead": f <= 0.17}
+	return {}
 
 # --------------------------------------------------------------- destruction
 func frozen_count() -> int:
@@ -503,13 +523,18 @@ func _harbor() -> void:
 		_static_kit("wood-floor", Vector3(44 + i, 0.0, 41), Vector3(1.0, 0.125, 1.0))
 	_crate_pyramid(63.0, 49.0, 3)
 
+func _gate(key: String, nm: String, pts: int, tx: int, reach: int) -> void:
+	for f in 3:
+		for z in range(2, reach):
+			_static_kit("wall-fortified", Vector3(tx, f, z))
+			_static_kit("wall-fortified", Vector3(tx, f, -z))
+	var gx: float = float(tx) * S
+	gaps.append({"key": key, "name": nm, "pts": pts, "x": gx, "half": 2.2, "ymax": 6.5})
+	_target(key, nm, pts, Vector3(gx, 2.5, 0.0))
+
 func _gate_and_keep() -> void:
 	# CENTER-FAR: a narrow gate you can thread ("Needle Gap") and the distant keep wall
-	for f in 3:
-		for z in range(2, 8):
-			_static_kit("wall-fortified", Vector3(50, f, z))
-			_static_kit("wall-fortified", Vector3(50, f, -z))
-	_target("needle", "Needle Gap", 800, Vector3(GAP_X, 2.5, 0.0))
+	_gate("needle", "Needle Gap", 800, 50, 8)
 	var win := _building(57, -4, 1, 9, 2, "keep", true, false, 1)
 	_bonus(win, "keep_window", "Keep Window", 1200)
 
@@ -522,13 +547,6 @@ func _perimeter() -> void:
 	for sgn in [-1.0, 1.0]:
 		_static_box(Vector3((WORLD_X_MAX + WORLD_X_MIN) * 0.5, 30.0, sgn * WORLD_Z), Vector3(WORLD_X_MAX - WORLD_X_MIN, 60.0, 2.0), col, false)
 		_static_box(Vector3((WORLD_X_MAX + WORLD_X_MIN) * 0.5, 2.0, sgn * WORLD_Z), Vector3(WORLD_X_MAX - WORLD_X_MIN, 4.0, 2.0), col)
-
-func _outskirts() -> void:
-	var spots := [Vector3(-10, 0, -25), Vector3(-10, 0, 25), Vector3(10, 0, -30), Vector3(12, 0, 32), Vector3(20, 0, -45),
-		Vector3(22, 0, 48), Vector3(40, 0, -42), Vector3(38, 0, 44), Vector3(58, 0, -30), Vector3(56, 0, 34), Vector3(84, 0, -30),
-		Vector3(86, 0, 30), Vector3(95, 0, -50), Vector3(97, 0, 52), Vector3(103, 0, -20), Vector3(103, 0, 24), Vector3(104, 0, -62), Vector3(104, 0, 62)]
-	for sp in spots:
-		_tree(sp)
 
 func _tree(s: Vector3) -> void:
 	var t := StaticBody3D.new()
@@ -603,3 +621,138 @@ func reset_in_place() -> void:
 		b.global_transform = Transform3D(Basis.IDENTITY, b.get_meta("rest"))
 		b.sleeping = true
 	released_order.clear()
+
+# ------------------------------------------------------------ the deep city (60-200 m)
+func _reserve(x0: float, z0: float, x1: float, z1: float) -> void:
+	_reserved.append(Rect2(Vector2(minf(x0, x1), minf(z0, z1)), Vector2(absf(x1 - x0), absf(z1 - z0))))
+
+func _is_reserved(x: float, z: float, pad: float) -> bool:
+	for r in _reserved:
+		if (r as Rect2).grow(pad).has_point(Vector2(x, z)):
+			return true
+	return false
+
+func _deep_city() -> void:
+	# keep-out zones (meters) for everything hand-placed, so the decorative city never overlaps it
+	for r in [[8, -16, 62, 16], [38, -36, 56, -16], [34, 14, 52, 36], [60, -68, 84, -36], [56, 26, 92, 74], [64, -14, 96, 14],
+			[110, -76, 160, -34], [110, 34, 160, 80], [150, -26, 200, 26], [128, -50, 146, -28], [128, 26, 146, 48], [138, -110, 166, -76], [138, 76, 166, 112]]:
+		_reserve(r[0], r[1], r[2], r[3])
+	# --- LEFT-CENTER, far: old mill tower
+	var mill := _tower_stack(87, -23, 7, "mill")
+	_bonus(mill, "mill", "Old Mill", 1000)
+	_building(84, -20, 2, 2, 1, "millhouse", false, true, -1)
+	# --- RIGHT-CENTER, far: grain silo
+	var silo := _tower_stack(90, 26, 7, "silo")
+	_bonus(silo, "silo", "Grain Silo", 1000)
+	_building(86, 23, 2, 2, 1, "siloshed", true, true, -1)
+	# --- FAR-LEFT: cliff watch (mid-depth) and the monastery spire (deep)
+	var cw := _tower_stack(80, -40, 8, "cliff")
+	_bonus(cw, "cliff_watch", "Cliff Watch", 1100)
+	_building(76, -36, 3, 2, 2, "cliffhall", true, false, 1)
+	var sp := _tower_stack(100, -60, 11, "spire")
+	_bonus(sp, "spire", "Monastery Spire", 1500)
+	_building(95, -64, 3, 3, 2, "abbey", true, false, 1)
+	_building(104, -56, 2, 2, 1, "abbey2", false, true, -1)
+	# --- FAR-RIGHT: harbor crane (mid-depth) and the port lighthouse (deep)
+	var cr := _tower_stack(84, 38, 7, "crane")
+	_bonus(cr, "crane", "Harbor Crane", 1100)
+	var lh := _tower_stack(100, 56, 11, "portlight")
+	_bonus(lh, "portlight", "Port Lighthouse", 1500)
+	_building(94, 52, 3, 3, 2, "customs", true, false, 1)
+	_building(104, 60, 2, 2, 1, "warehouse", false, true, -1)
+	var water := _box_mesh(Vector3(52.0, 0.05, 36.0), Color(0.2, 0.45, 0.8))
+	water.position = Vector3(150.0, 0.04, 98.0)
+	add_child(water)
+	for i in 12:
+		_static_kit("wood-floor", Vector3(100 + i, 0.0, 66), Vector3(1.0, 0.125, 1.0))
+	_crate_pyramid(138.0, 70.0, 4)
+	_crate_pyramid(144.0, -72.0, 4)
+	# --- FAR-CENTER: the grand castle
+	_gate("grand_gate", "Grand Gate", 1600, 110, 10)
+	for i in 4:
+		_crate_pyramid(168.0, -10.0 + i * 7.0, 3)
+	var wall_win := _building(118, -8, 1, 17, 3, "castle", true, false, 2)
+	_bonus(wall_win, "castle_window", "Castle Window", 1800)
+	var crown := _tower_stack(126, 0, 13, "crown")
+	_bonus(crown, "crown", "Castle Crown", 2500)
+	_tower_stack(118, -10, 6, "ctowerL")
+	_tower_stack(118, 10, 6, "ctowerR")
+	_ring("far_ring", "Far Bullseye", Vector2(130.0, -14.0), 9.0, 1000)
+	# --- extra mid-depth cover: wall runs and crate piles
+	for w in [Vector3i(70, -14, 5), Vector3i(70, 12, 5), Vector3i(96, -6, 6), Vector3i(96, 2, 5)]:
+		_building(w.x, w.y, 1, w.z, 2, "deepwall%d_%d" % [w.x, w.y], true, false, -1)
+
+# decorative (non-breakable) city: ONE MultiMesh per mesh type + ONE static body of box shapes
+func _decor_cottage(x: float, z: float, yaw: float) -> void:
+	var bas := Basis(Vector3.UP, yaw)
+	var sc := Basis.from_scale(Vector3.ONE * S)
+	for i in 2:
+		var pos: Vector3 = Vector3(x, 0.0, z) + bas * Vector3((float(i) - 0.5) * S, 0.0, 0.0)
+		_decor_walls.append(Transform3D(bas * sc, pos))
+		_decor_roofs.append(Transform3D(bas * sc, pos + Vector3(0, S, 0)))
+	var cs := CollisionShape3D.new()
+	var sh := BoxShape3D.new()
+	sh.size = Vector3(2.0 * S, 2.0 * S, S)
+	cs.shape = sh
+	cs.transform = Transform3D(bas, Vector3(x, S, z))
+	_decor_body.add_child(cs)
+
+func _decor_tree(x: float, z: float) -> void:
+	_decor_trees.append(Transform3D(Basis.from_scale(Vector3.ONE * 2.2), Vector3(x, 0, z)))
+	var cs := CollisionShape3D.new()
+	var sh := CylinderShape3D.new()
+	sh.radius = 0.5
+	sh.height = 2.6
+	cs.shape = sh
+	cs.position = Vector3(x, 1.3, z)
+	_decor_body.add_child(cs)
+
+func _mesh_of(model: String) -> Mesh:
+	var inst := _kit(model)
+	var mi := inst.find_children("*", "MeshInstance3D", true, false)[0] as MeshInstance3D
+	var mesh: Mesh = mi.mesh
+	inst.free()
+	return mesh
+
+func _multimesh(mesh: Mesh, xfs: Array[Transform3D]) -> void:
+	if xfs.is_empty():
+		return
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = mesh
+	mm.instance_count = xfs.size()
+	for i in xfs.size():
+		mm.set_instance_transform(i, xfs[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	add_child(mmi)
+
+func _decor_city() -> void:
+	_decor_body = StaticBody3D.new()
+	_decor_body.collision_layer = 1
+	_decor_body.collision_mask = 0
+	_decor_body.physics_material_override = _phys_stone
+	add_child(_decor_body)
+	var n := 0
+	var ix := 0
+	for xi in range(18, 214, 12):
+		var iz := 0
+		for zi in range(-124, 125, 12):
+			var jitter := Vector2(float((ix * 7 + iz * 13) % 5) - 2.0, float((ix * 11 + iz * 5) % 5) - 2.0) * 1.2
+			var x: float = float(xi) + jitter.x
+			var z: float = float(zi) + jitter.y
+			iz += 1
+			if absf(z) < 6.0 and x > 0.0:                 # the main road stays clear
+				continue
+			if _is_reserved(x, z, 3.0):
+				continue
+			var kind: int = (ix * 3 + iz * 5) % 7
+			if kind < 4:
+				_decor_cottage(x, z, (PI * 0.5) if (kind % 2 == 1) else 0.0)
+				n += 1
+			elif kind < 6:
+				_decor_tree(x, z)
+		ix += 1
+	_multimesh(_mesh_of("wall"), _decor_walls)
+	_multimesh(_mesh_of("roof"), _decor_roofs)
+	_multimesh(_mesh_of("tree-large"), _decor_trees)

@@ -12,7 +12,10 @@ const MIN_POWER := 0.12
 const TRAJ_DOTS := 30
 const AIM_MAX_PX := 240.0         # drag length (virtual px) for full power; measured along the diagonal pull
 const SIDE_GAIN := 1.0            # lateral aim gain (was 0.7 in G1: far-left/right targets need up to ~45 deg)
-const MAX_FLIGHT_S := 11.0
+const MAX_FLIGHT_S := 13.0
+const OVERDRIVE_MAX := 1.45       # pull past the old full-power point (1.0) for extra speed
+const OVERDRIVE_SPEED := 46.0     # launch speed at full overdrive (old maximum 32.0 is reached at power 1.0)
+const MIN_MARGIN := Vector2(40.0, 30.0)
 const SKIP_AFTER_S := 1.5
 
 var state: int = State.AIM
@@ -52,7 +55,11 @@ var _basis_side: Vector2 = Vector2(0.64, 0.77)     # screen direction of world +
 var _last_event: float = 0.0
 var flight_t: float = 0.0           # physics-time clock since launch (deterministic; not wall-clock)
 var _trav_dir: Vector3 = Vector3.RIGHT
-var _gap_done: bool = false
+var _gaps_done: Dictionary = {}
+var _landed: bool = false
+var margins: Vector4 = Vector4(40, 30, 40, 30)   # left, top, right, bottom (canvas px, safe-area aware)
+var _bar_tick: ColorRect
+var menu: SettingsMenu
 var _prev_x: float = 0.0
 
 # ui
@@ -85,9 +92,11 @@ func _ready() -> void:
 	_setup_ui()
 	_setup_particles()
 	_setup_dots()
-	var menu := SettingsMenu.new()
+	menu = SettingsMenu.new()
 	menu.main_ref = self
 	ui.add_child(menu)
+	get_viewport().size_changed.connect(_apply_safe_area)
+	_apply_safe_area()
 	reset()
 	_confirm_ota_later()
 
@@ -232,6 +241,11 @@ func _setup_ui() -> void:
 	bar_fill.position = Vector2(3, 3)
 	bar_fill.size = Vector2(0, 20)
 	bar_bg.add_child(bar_fill)
+	_bar_tick = ColorRect.new()          # marks the old full-power point; beyond it = overdrive
+	_bar_tick.color = Color(1, 1, 1, 0.9)
+	_bar_tick.size = Vector2(3, 26)
+	_bar_tick.position = Vector2(3.0 + 314.0 / OVERDRIVE_MAX, 0)
+	bar_bg.add_child(_bar_tick)
 	# result panel
 	result_panel = PanelContainer.new()
 	result_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -287,6 +301,38 @@ func _label(sz: int, align: int) -> Label:
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return l
 
+## Keep every HUD element inside the visible/safe area (rounded corners, cutouts, nav bars).
+func _apply_safe_area() -> void:
+	var vp: Vector2 = get_viewport().get_visible_rect().size
+	var win: Vector2 = Vector2(DisplayServer.window_get_size())
+	var l := 0.0
+	var t := 0.0
+	var r := 0.0
+	var b := 0.0
+	if win.x > 0.0 and win.y > 0.0:
+		var sa: Rect2i = DisplayServer.get_display_safe_area()
+		var scr: Vector2i = DisplayServer.screen_get_size()
+		var spos: Vector2i = DisplayServer.screen_get_position()
+		if sa.size.x > 0 and scr.x > 0:
+			var k: Vector2 = Vector2(vp.x / win.x, vp.y / win.y)
+			l = maxf(float(sa.position.x - spos.x), 0.0) * k.x
+			t = maxf(float(sa.position.y - spos.y), 0.0) * k.y
+			r = maxf(float(scr.x - (sa.position.x - spos.x) - sa.size.x), 0.0) * k.x
+			b = maxf(float(scr.y - (sa.position.y - spos.y) - sa.size.y), 0.0) * k.y
+	margins = Vector4(maxf(l, MIN_MARGIN.x), maxf(t, MIN_MARGIN.y), maxf(r, MIN_MARGIN.x), maxf(b, MIN_MARGIN.y))
+	lbl_stats.position = Vector2(margins.x, margins.y)
+	lbl_fps.position = Vector2(margins.x, vp.y - margins.w - 22.0)
+	bar_bg.position = Vector2(margins.x + 10.0, vp.y - margins.w - 86.0)
+	btn_reset.offset_right = -margins.z
+	btn_reset.offset_left = -margins.z - 134.0
+	btn_reset.offset_top = margins.y
+	btn_reset.offset_bottom = margins.y + 80.0
+	lbl_score.offset_top = margins.y - 6.0
+	lbl_hint.offset_top = -margins.w - 76.0
+	lbl_hint.offset_bottom = -margins.w
+	if menu:
+		menu.relayout(margins)
+
 # ---------------------------------------------------------------- reset
 func _on_again() -> void:
 	reset()
@@ -325,7 +371,8 @@ func reset() -> void:
 	frame_worst = 0.0
 	attempt += 1
 	_last_event = 0.0
-	_gap_done = false
+	_gaps_done = {}
+	_landed = false
 	_trav_dir = Vector3.RIGHT
 	_compute_aim_camera()
 	_set_aim_pose(Vector3.RIGHT, 0.0)
@@ -337,9 +384,16 @@ func reset() -> void:
 	cam.global_transform = _cam_aim_xf
 	_update_hud()
 
+## Where the pouch sits for a given aim. Clamped above the ground: a steep full pull used to put the
+## ragdoll BELOW the ground (G1/G2 bug: such launches went nowhere).
+func pouch_pos(dir: Vector3, power: float) -> Vector3:
+	var pos: Vector3 = LAUNCH_ORIGIN - dir * PULL_LEN * minf(power, 1.0) - dir * 0.8 * maxf(power - 1.0, 0.0)
+	pos.y = maxf(pos.y, 1.5)
+	return pos
+
 func _set_aim_pose(dir: Vector3, power: float) -> void:
 	var b := Basis.looking_at(dir, Vector3.UP) * Basis(Vector3.RIGHT, -PI / 2.0) * Basis(Vector3.UP, PI)
-	var pos: Vector3 = LAUNCH_ORIGIN - dir * PULL_LEN * power
+	var pos: Vector3 = pouch_pos(dir, power)
 	ragdoll.set_pose(Transform3D(b, pos))
 	town.set_band(pos)
 
@@ -381,20 +435,35 @@ func _update_aim() -> void:
 		b = (drag_vec.x * _basis_side.y - drag_vec.y * _basis_side.x) / det
 		sd = (_basis_back.x * drag_vec.y - _basis_back.y * drag_vec.x) / det
 	var p := Vector2(sd, b) / AIM_MAX_PX
-	if p.length() > 1.0:
-		p = p.normalized()
-	aim_power = p.length()
+	if p.length() > OVERDRIVE_MAX:
+		p = p.normalized() * OVERDRIVE_MAX
+	aim_power = p.length()                                # 0..1 = the old power range, 1..1.45 = overdrive
 	var up: float = clampf(p.y, 0.05, 1.0) * 1.6          # same elevation + power curve as G1/G2
-	var side: float = -p.x * SIDE_GAIN
+	var side: float = -clampf(p.x, -1.0, 1.0) * SIDE_GAIN
 	aim_dir = Vector3(1.0, up, side).normalized()
 	_set_aim_pose(aim_dir, aim_power)
 	_update_preview()
 	bar_bg.visible = true
-	bar_fill.size.x = 314.0 * aim_power
-	bar_fill.color = Color(0.3, 0.9, 0.3).lerp(Color(1.0, 0.25, 0.2), aim_power)
+	bar_fill.size.x = 314.0 * clampf(aim_power / OVERDRIVE_MAX, 0.0, 1.0)
+	if aim_power <= 1.0:
+		bar_fill.color = Color(0.3, 0.9, 0.3).lerp(Color(1.0, 0.25, 0.2), aim_power)
+	else:
+		bar_fill.color = Color(1.0, 0.25, 0.2).lerp(Color(0.8, 0.3, 1.0), (aim_power - 1.0) / (OVERDRIVE_MAX - 1.0))
+	lbl_hint.visible = aim_power > 1.02
+	lbl_hint.text = "OVERDRIVE!"
+	_bar_tick.position.x = 3.0 + 314.0 / OVERDRIVE_MAX
+
+static func speed_for_power(p: float) -> float:
+	if p <= 1.0:
+		return lerpf(MIN_SPEED, MAX_SPEED, pow(p, 0.9))      # identical to G1/G2
+	return lerpf(MAX_SPEED, OVERDRIVE_SPEED, clampf((p - 1.0) / (OVERDRIVE_MAX - 1.0), 0.0, 1.0))
+
+## 1.0 up to the old full power; fades to 0 at full overdrive so the longest shots fly nearly ballistic.
+static func air_drag_scale(p: float) -> float:
+	return clampf(1.0 - (p - 1.0) / (OVERDRIVE_MAX - 1.0), 0.0, 1.0)
 
 func launch_speed() -> float:
-	return lerpf(MIN_SPEED, MAX_SPEED, pow(aim_power, 0.9))
+	return speed_for_power(aim_power)
 
 func _update_preview() -> void:
 	var v: Vector3 = aim_dir * launch_speed()
@@ -418,7 +487,7 @@ func fire() -> void:
 	bar_bg.visible = false
 	town.set_band(LAUNCH_ORIGIN)
 	var spin := Vector3(randf_range(-6, 6), randf_range(-3, 3), randf_range(-8, 8))
-	ragdoll.launch(aim_dir * launch_speed(), spin)
+	ragdoll.launch(aim_dir * launch_speed(), spin, air_drag_scale(aim_power))
 	sfx.play("launch", 0.0, randf_range(0.9, 1.1))
 	trauma = 0.25
 	lbl_hint.visible = false
@@ -447,25 +516,43 @@ func _on_impact(part: RigidBody3D, other: Node, speed: float, pos: Vector3) -> v
 		var vel: Vector3 = ragdoll.prev_velocity(part)
 		var released: Array[RigidBody3D] = town.smash(piece, pos, vel.normalized(), speed)
 		if released.size() > 0:
+			var dmg: int = 0
+			for rp in released:
+				var pts: int = damage_points(rp, speed)
+				if scoring.add_smash(rp.get_instance_id(), pts, rp.global_position):
+					dmg += pts
+			scoring.awarded.emit("SMASH x%d" % released.size(), dmg, pos)
 			# bust through: the thing we hit gives way, keep most of our momentum
 			part.linear_velocity = vel * 0.6
 			_burst(pos)
 			sfx.play("crash", 2.0, randf_range(0.8, 1.1))
 			trauma = maxf(trauma, 0.7)
+	elif other.has_meta("ground") and not _landed and speed > 3.0:
+		_landed = true
+		var ra: Dictionary = town.ring_award(pos)
+		if not ra.is_empty():
+			scoring.award(str(ra["key"]), str(ra["name"]), int(ra["pts"]), "Targets", pos)
+			if bool(ra["dead"]):
+				trauma = 0.9
+				sfx.play("boing", 2.0, 1.2)
 	elif other.has_meta("prop") and speed > 6.0:
 		if other.has_meta("bonus"):
 			var bb: Dictionary = other.get_meta("bonus")
 			scoring.award(str(bb["key"]), str(bb["name"]), int(bb["pts"]), "Targets", pos)
-		scoring.award("hit_%d" % other.get_instance_id(), "WHAM!", 25, "Impacts", pos)
+		var pm: float = (other as RigidBody3D).mass if other is RigidBody3D else 1.0
+		scoring.award("hit_%d" % other.get_instance_id(), "WHAM!", int((10.0 + pm * 4.0) * clampf(speed / 14.0, 0.6, 2.5)), "Impacts", pos)
 		_burst(pos)
 	elif other.has_meta("ground") == false and not other.has_meta("kind") and not other.has_meta("prop") and speed > 10.0:
 		scoring.award("hit_%d" % other.get_instance_id(), "BONK!", 25, "Impacts", pos)
+
+## Damage score: heavier pieces and harder hits are worth more.
+func damage_points(p: RigidBody3D, impact_speed: float) -> int:
+	return int(round((5.0 + 3.0 * p.mass) * clampf(impact_speed / 14.0, 0.6, 2.5)))
 
 func _on_piece_released(p: RigidBody3D) -> void:
 	if state != State.FLIGHT:
 		return
 	_last_event = flight_t
-	scoring.add_smash(p.get_instance_id(), 12, p.global_position)
 	if p.has_meta("bonus"):
 		var b: Dictionary = p.get_meta("bonus")
 		scoring.award(str(b["key"]), str(b["name"]), int(b["pts"]), "Targets", p.global_position)
@@ -518,10 +605,12 @@ func _physics_process(dt: float) -> void:
 		scoring.flips += 1
 		scoring.award("flip_%d" % scoring.flips, "FLIP x%d" % scoring.flips, 60, "Flips", c)
 	_update_hud()
-	# "Needle Gap": the torso crosses the gate plane inside the opening
-	if not _gap_done and not legacy_world and _prev_x < Town.GAP_X and c.x >= Town.GAP_X and absf(c.z) < Town.GAP_HALF and c.y < 6.5:
-		_gap_done = true
-		scoring.award("needle", "Needle Gap", 800, "Targets", c)
+	# thread-the-gap targets: the torso crosses a gate plane inside its opening
+	for gp in town.gaps:
+		var gk: String = str(gp["key"])
+		if not _gaps_done.has(gk) and _prev_x < float(gp["x"]) and c.x >= float(gp["x"]) and absf(c.z) < float(gp["half"]) and c.y < float(gp["ymax"]) and c.y > 0.2:
+			_gaps_done[gk] = true
+			scoring.award(gk, str(gp["name"]), int(gp["pts"]), "Targets", c)
 	_prev_x = c.x
 	# end of flight: settled, or nothing interesting happening any more, or out of time/bounds
 	var now: float = flight_t
@@ -536,11 +625,9 @@ func _physics_process(dt: float) -> void:
 func _finish() -> void:
 	state = State.RESULT
 	var c: Vector3 = ragdoll.centre()
-	var d: float = Vector2(c.x - town.bullseye.x, c.z - town.bullseye.y).length()
-	if d < town.bullseye_inner:
-		scoring.award("bullseye", "Bullseye", 500, "Targets", c)
-	elif d < town.bullseye_outer:
-		scoring.award("target", "Landed on target", 150, "Targets", c)
+	var ra: Dictionary = town.ring_award(c)
+	if not ra.is_empty():
+		scoring.award(str(ra["key"]), str(ra["name"]), int(ra["pts"]), "Targets", c)
 	var total: int = scoring.total()
 	var new_best: bool = total > best
 	if new_best:

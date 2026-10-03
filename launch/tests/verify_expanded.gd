@@ -61,6 +61,8 @@ func _run() -> void:
 	var ang := deg_to_rad(45.0)
 	var rng: float = v * v * sin(2.0 * ang) / g
 	check(absf(rng - 104.5) < 0.5, "reference ballistic range at 45 deg full power = %.1f m (unchanged)" % rng)
+	check(is_equal_approx(main.speed_for_power(1.0), 32.0) and is_equal_approx(main.speed_for_power(0.5), lerpf(9.0, 32.0, pow(0.5, 0.9))), "every pull up to the old maximum gives the same speed as before")
+	check(is_equal_approx(main.speed_for_power(1.45), 46.0) and main.speed_for_power(1.2) > 32.0 and main.speed_for_power(1.2) < 46.0, "overdrive band: 32 -> 46 m/s beyond full power")
 	# ---- aim mapping: default lower-left pull
 	check(main._basis_back.x < -0.3 and main._basis_back.y > 0.3, "pull-back points toward the LOWER-LEFT of the screen %s" % str(main._basis_back))
 	var dets: float = absf(main._basis_back.x * main._basis_side.y - main._basis_back.y * main._basis_side.x)
@@ -72,10 +74,10 @@ func _run() -> void:
 		var a := deg_to_rad(-90.0 + 9.0 * k)           # angle of the unit pull vector in (side, back) space
 		var s := sin(a)
 		var b := maxf(cos(a), 0.0)
-		var d: Vector2 = (main._basis_back * b + main._basis_side * s) * main.AIM_MAX_PX
+		var d: Vector2 = (main._basis_back * b + main._basis_side * s) * main.AIM_MAX_PX * main.OVERDRIVE_MAX
 		worst_x = maxf(worst_x, absf(d.x))
 		worst_y = maxf(worst_y, absf(d.y))
-	check(worst_x < 1280.0 * 0.45 and worst_y < 720.0 * 0.55, "full-power drag fits on screen from a mid-screen start (max %.0f x %.0f px)" % [worst_x, worst_y])
+	check(worst_x < 1280.0 * 0.5 and worst_y < 720.0 * 0.6, "full-overdrive drag fits on screen from a mid-screen start (max %.0f x %.0f px)" % [worst_x, worst_y])
 	# distinct, monotonic aim
 	var yaws: Array[float] = []
 	for k in 9:
@@ -104,52 +106,79 @@ func _run() -> void:
 		regions[t["region"]] = true
 		pmin = mini(pmin, int(t["pts"]))
 		pmax = maxi(pmax, int(t["pts"]))
-	check(tg.size() >= 10 and keys.size() == tg.size(), "%d distinct targets" % tg.size())
+	check(tg.size() >= 20 and keys.size() == tg.size(), "%d distinct targets" % tg.size())
 	check(regions.size() == 5, "targets cover all five regions %s" % str(regions.keys()))
-	check(pmin <= 150 and pmax >= 1000, "target values scale with difficulty (%d..%d)" % [pmin, pmax])
+	check(pmin <= 150 and pmax >= 2000, "target values scale with difficulty (%d..%d)" % [pmin, pmax])
+	check(main.town.gaps.size() == 2 and main.town.rings.size() == 2, "2 gates to thread and 2 landing rings")
+	var rr: Dictionary = main.town.ring_award(Vector3(68.0, 0, 14.0))
+	var rm: Dictionary = main.town.ring_award(Vector3(68.0 + 7.5 * 0.5, 0, 14.0))
+	var ro: Dictionary = main.town.ring_award(Vector3(68.0 + 7.5 * 0.95, 0, 14.0))
+	check(rr["pts"] == 1000 and rr["dead"] and rm["pts"] > ro["pts"] and ro["pts"] > 0 and main.town.ring_award(Vector3(0, 0, 0)).is_empty(), "bullseye pays more the closer to dead centre (%d / %d / %d)" % [rr["pts"], rm["pts"], ro["pts"]])
+	var wall: RigidBody3D = main.town.pieces[0]
+	var light: RigidBody3D = wall
+	var heavy: RigidBody3D = wall
+	for pc in main.town.pieces:
+		if pc.mass < light.mass: light = pc
+		if pc.mass > heavy.mass: heavy = pc
+	check(main.damage_points(wall, 22.0) > main.damage_points(wall, 8.0) and main.damage_points(heavy, 14.0) > main.damage_points(light, 14.0), "smash points scale with impact speed (%d vs %d) and piece weight (%d vs %d)" % [main.damage_points(wall, 22.0), main.damage_points(wall, 8.0), main.damage_points(heavy, 14.0), main.damage_points(light, 14.0)])
 	var unreachable: Array = []
 	for t in tg:
 		var best := 1e9
 		var tp: Vector3 = t["pos"]
-		for bi in 51:
-			for si in 101:
-				var b: float = bi / 50.0
-				var s: float = -1.0 + si / 50.0
+		var is_gate: bool = main.town.gaps.any(func(gp): return gp["key"] == t["key"])
+		var ring: Dictionary = {}
+		for rg in main.town.rings:
+			if rg["key"] == t["key"]:
+				ring = rg
+		var tol: float = 3.0 if tp.x < 150.0 else 12.0           # deep structures: any hit on the tall stack counts
+		for bi in 291:
+			for si in 21 if is_gate else 117:
+				var b: float = bi / 200.0
+				var s: float = (-0.1 + si / 100.0) if is_gate else (-1.45 + si / 40.0)
+				if not is_gate and bi % 5 != 0:
+					continue
 				var p := Vector2(s, b)
-				if p.length() > 1.0 or p.length() < 0.12:
+				if p.length() > main.OVERDRIVE_MAX or p.length() < 0.12:
 					continue
 				var up: float = clampf(b, 0.05, 1.0) * 1.6
-				var dir := Vector3(1.0, up, -s * main.SIDE_GAIN).normalized()
+				var dir := Vector3(1.0, up, -clampf(s, -1.0, 1.0) * main.SIDE_GAIN).normalized()
 				var power: float = p.length()
-				var spd: float = lerpf(9.0, 32.0, pow(power, 0.9))
-				var p0: Vector3 = main.LAUNCH_ORIGIN - dir * main.PULL_LEN * power
-				var prev := p0
-				for ti in range(1, 400):
-					var tt: float = 0.02 * ti
-					var pos: Vector3 = p0 + dir * spd * tt + Vector3(0, -0.5 * g * tt * tt, 0)
+				var spd: float = main.speed_for_power(power)
+				var p0: Vector3 = main.pouch_pos(dir, power)
+				var c_drag: float = 0.15 * main.air_drag_scale(power)
+				var pos: Vector3 = p0
+				var prev: Vector3 = p0
+				var vel: Vector3 = dir * spd
+				for ti in range(1, 700):
+					vel += Vector3(0, -g, 0) * 0.02
+					vel *= 1.0 / (1.0 + c_drag * 0.02)
+					pos += vel * 0.02
 					if pos.y < 0.0:
-						break
-					if t["key"] == "needle":
-						if prev.x < main.town.GAP_X and pos.x >= main.town.GAP_X and absf(pos.z) < main.town.GAP_HALF and pos.y < 6.5 and pos.y > 0.3:
+						if not ring.is_empty() and Vector2(pos.x - (ring["center"] as Vector2).x, pos.z - (ring["center"] as Vector2).y).length() <= float(ring["r"]):
 							best = 0.0
-					else:
-						# hitting anywhere on the structure (vertical segment under the marker) counts
+						break
+					if is_gate:
+						for gp in main.town.gaps:
+							if gp["key"] == t["key"] and prev.x < gp["x"] and pos.x >= gp["x"] and absf(pos.z) < gp["half"] and pos.y < gp["ymax"] and pos.y > 0.3:
+								best = 0.0
+					elif ring.is_empty():
 						var dy: float = maxf(pos.y - tp.y, 0.0)
 						best = minf(best, Vector3(pos.x - tp.x, dy, pos.z - tp.z).length())
 					prev = pos
-		if best > 3.0:
+		if best > tol:
 			unreachable.append("%s %.1f" % [t["name"], best])
-	check(unreachable.is_empty(), "every target is ballistically reachable within 3 m %s" % str(unreachable))
+	check(unreachable.is_empty(), "every target is ballistically reachable (3 m near, 12 m deep stacks) %s" % str(unreachable))
 	var sc := Scoring.new()
 	check(sc.award("window", "x", 150, "Targets") and not sc.award("window", "x", 150, "Targets"), "a target scores once per shot")
 	# ---- world content
-	check(main.town.pieces.size() >= 200, "%d breakable pieces, %d props" % [main.town.pieces.size(), main.town.props.size()])
+	check(main.town.pieces.size() >= 300, "%d breakable pieces, %d props, %d decorative cottages/trees (multimesh)" % [main.town.pieces.size(), main.town.props.size(), main.town._decor_walls.size() / 2 + main.town._decor_trees.size()])
 	var xmax := 0.0
 	var zmax := 0.0
 	for t in tg:
 		xmax = maxf(xmax, t["pos"].x)
 		zmax = maxf(zmax, absf(t["pos"].z))
-	check(xmax >= 85.0 and zmax >= 50.0, "playfield spans x to %.0f m and +-%.0f m" % [xmax, zmax])
+	check(xmax >= 180.0 and zmax >= 80.0, "targets reach %.0f m deep and +-%.0f m wide (old village: 58 m deep)" % [xmax, zmax])
+	check(main.margins.x >= 40.0 and main.margins.y >= 30.0 and main.margins.z >= 40.0 and main.margins.w >= 30.0, "HUD keeps >= safe margins from the screen corners %s" % str(main.margins))
 	# ---- active-body cap
 	var rel := 0
 	for p in main.town.pieces:
@@ -175,13 +204,17 @@ func _run() -> void:
 	# ---- extreme shots: result in time, camera keeps the ragdoll in view, bounded physics
 	var shots := {
 		"hard left": [0.55, 0.85], "hard right": [0.55, -0.85], "long centre": [0.8, 0.0],
-		"high lob": [1.0, 0.0], "flat fast": [0.1, 0.0], "left-centre": [0.7, 0.45], "right-centre": [0.7, -0.45]}
+		"high lob": [1.0, 0.0], "flat fast": [0.1, 0.0], "left-centre": [0.7, 0.45], "right-centre": [0.7, -0.45],
+		"overdrive long": [1.45, 0.0], "overdrive left": [1.2, 0.8], "overdrive right": [1.2, -0.8]}
 	for nm in shots.keys():
 		var r: Dictionary = await _shoot(main, shots[nm][0], shots[nm][1])
-		check(r.state == 2 and r.sane, "%s: reaches RESULT in %.1f s of flight, sane" % [nm, r.frames / 60.0])
+		check(r.end.x > 5.0 or nm == "flat fast", "%s: ragdoll actually left the launcher (x=%.0f)" % [nm, r.end.x])
+		check(r.state == 2 and r.sane and r.frames < 60 * 14, "%s: reaches RESULT in %.1f s of flight, sane" % [nm, r.frames / 60.0])
 		check(r.view >= 0.90, "%s: ragdoll in camera view %.0f%% of frames" % [nm, r.view * 100.0])
 		check(main.cam.global_position.y > 1.5, "%s: camera stays above ground" % nm)
 		print("      end=%s score=%d worst_frame=%.1fms active=%d" % [str(r.end), r.score, r.worst_ms, r.active])
+	var od: Dictionary = await _shoot(main, 1.45, 0.0)
+	check(od.end.x > 150.0 and od.score > 1000, "full overdrive reaches the grand castle (x=%.0f, score %d)" % [od.end.x, od.score])
 	# ---- stress: smash through the densest cluster
 	var st: Dictionary = await _shoot(main, 0.12, 0.0)
 	check(st.active <= main.town.ACTIVE_CAP + 10, "stress shot: peak active released pieces %d" % st.active)

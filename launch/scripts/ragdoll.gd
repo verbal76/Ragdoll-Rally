@@ -7,6 +7,7 @@ extends Node3D
 signal impact(part: RigidBody3D, other: Node, speed: float, point: Vector3)
 
 const CHAR_SCALE := 0.6
+const AIR_DRAG := 0.15        # project default linear damp (0.1) + body damp (0.05) = what G1/G2 flew with
 const LETTERS := "abcdefghijklmnopqr"
 const PARTS := ["torso", "head", "arm-left", "arm-right", "leg-left", "leg-right"]
 const MASS := {"torso": 6.0, "head": 2.6, "arm-left": 1.1, "arm-right": 1.1, "leg-left": 1.8, "leg-right": 1.8}
@@ -16,6 +17,7 @@ var rest: Array[Transform3D] = []   # per body, relative to rig origin (= torso 
 var torso: RigidBody3D
 var joint_count: int = 0
 var launched: bool = false
+var _air_free: bool = false      # reduced-drag flight (overdrive shots) until the first impact
 var _prev_vel: Dictionary = {}
 
 static func scene_path(letter: String) -> String:
@@ -118,7 +120,15 @@ func _physics_process(_dt: float) -> void:
 	for b in bodies:
 		_prev_vel[b] = b.linear_velocity
 
+func _restore_drag() -> void:
+	if _air_free:
+		_air_free = false
+		for b in bodies:
+			b.linear_damp_mode = RigidBody3D.DAMP_MODE_COMBINE
+			b.linear_damp = 0.05
+
 func _on_body_entered(other: Node, body: RigidBody3D) -> void:
+	_restore_drag()
 	var pv: Vector3 = _prev_vel.get(body, body.linear_velocity)
 	impact.emit(body, other, pv.length(), body.global_position)
 
@@ -130,8 +140,15 @@ func set_pose(pose: Transform3D) -> void:
 	for i in bodies.size():
 		bodies[i].global_transform = pose * rest[i]
 
-func launch(velocity: Vector3, spin: Vector3) -> void:
+## `drag_scale` 1.0 = the original air drag (G1/G2 behaviour, used up to full power); below 1.0 the
+## ragdoll flies with proportionally less linear drag until its first impact (overdrive shots).
+func launch(velocity: Vector3, spin: Vector3, drag_scale: float = 1.0) -> void:
 	launched = true
+	if drag_scale < 0.999:
+		_air_free = true
+		for b in bodies:
+			b.linear_damp_mode = RigidBody3D.DAMP_MODE_REPLACE
+			b.linear_damp = AIR_DRAG * drag_scale
 	for b in bodies:
 		b.freeze = false
 		b.linear_velocity = velocity
