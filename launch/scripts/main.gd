@@ -9,7 +9,11 @@ const PULL_LEN := 3.6
 const MIN_SPEED := 9.0
 const MAX_SPEED := 32.0
 const MIN_POWER := 0.12
-const TRAJ_DOTS := 26
+const TRAJ_DOTS := 30
+const AIM_MAX_PX := 240.0         # drag length (virtual px) for full power; measured along the diagonal pull
+const SIDE_GAIN := 1.0            # lateral aim gain (was 0.7 in G1: far-left/right targets need up to ~45 deg)
+const MAX_FLIGHT_S := 11.0
+const SKIP_AFTER_S := 1.5
 
 var state: int = State.AIM
 var town: Town
@@ -40,6 +44,16 @@ var frame_sum: float = 0.0
 var frame_n: int = 0
 var frame_worst: float = 0.0
 var _smash_vel_fix: Dictionary = {}
+var force_rebuild: bool = false     # tests: rebuild the town on every reset (instead of the fast in-place reset)
+var legacy_world: bool = false      # tests: original small village only (physics baseline)
+var view_right: bool = false        # false: pull toward lower-left, true: lower-right
+var _basis_back: Vector2 = Vector2(-0.77, 0.64)    # screen direction of "pull back" (world -X)
+var _basis_side: Vector2 = Vector2(0.64, 0.77)     # screen direction of world +Z
+var _last_event: float = 0.0
+var flight_t: float = 0.0           # physics-time clock since launch (deterministic; not wall-clock)
+var _trav_dir: Vector3 = Vector3.RIGHT
+var _gap_done: bool = false
+var _prev_x: float = 0.0
 
 # ui
 var ui: CanvasLayer
@@ -71,7 +85,9 @@ func _ready() -> void:
 	_setup_ui()
 	_setup_particles()
 	_setup_dots()
-	ui.add_child(SettingsMenu.new())
+	var menu := SettingsMenu.new()
+	menu.main_ref = self
+	ui.add_child(menu)
 	reset()
 	_confirm_ota_later()
 
@@ -110,14 +126,34 @@ func _setup_environment() -> void:
 
 func _setup_camera() -> void:
 	cam = Camera3D.new()
-	cam.fov = 62.0
+	cam.fov = 66.0
 	cam.near = 0.2
-	cam.far = 400.0
+	cam.far = 500.0
 	add_child(cam)
 	cam.current = true
-	_cam_aim_xf = Transform3D(Basis.IDENTITY, Vector3(-6.5, 4.2, 0.6)).looking_at(Vector3(10.0, 2.4, 0.0), Vector3.UP)
+	_compute_aim_camera()
 	cam.global_transform = _cam_aim_xf
 	_noise.frequency = 2.0
+
+## Three-quarter opening view: camera behind the launcher, raised and rotated ~30 deg so the
+## pull-back direction (world -X) points toward a LOWER screen corner and more of the field
+## to the left/right is visible.
+func _compute_aim_camera() -> void:
+	var zs: float = -1.0 if view_right else 1.0           # camera sits on the +Z side (pull toward lower-left) or -Z side
+	var fh := Vector3(cos(deg_to_rad(30.0)), 0.0, -sin(deg_to_rad(30.0)) * zs)
+	var pos: Vector3 = LAUNCH_ORIGIN - fh * 14.0 + Vector3(0, 8.0, 0)
+	_cam_aim_xf = Transform3D(Basis.IDENTITY, pos).looking_at(LAUNCH_ORIGIN + fh * 26.0 + Vector3(0, 3.0, 0), Vector3.UP)
+	_update_aim_basis()
+
+func _update_aim_basis() -> void:
+	# screen-space directions of world -X (back) and +Z (side) at the launcher, from the aim camera
+	var saved := cam.global_transform if cam else Transform3D.IDENTITY
+	if cam:
+		cam.global_transform = _cam_aim_xf
+		var o: Vector2 = cam.unproject_position(LAUNCH_ORIGIN)
+		_basis_back = (cam.unproject_position(LAUNCH_ORIGIN + Vector3(-6, 0, 0)) - o).normalized()
+		_basis_side = (cam.unproject_position(LAUNCH_ORIGIN + Vector3(0, 0, 6)) - o).normalized()
+		cam.global_transform = saved
 
 func _setup_dots() -> void:
 	for i in TRAJ_DOTS:
@@ -256,19 +292,19 @@ func _on_again() -> void:
 	reset()
 
 func reset() -> void:
-	if is_instance_valid(town):
-		town.queue_free()
 	if is_instance_valid(ragdoll):
+		remove_child(ragdoll)
 		ragdoll.queue_free()
-	# rebuild immediately (free now so counts/tests are deterministic)
-	for n in get_children():
-		if n is Town or n is Ragdoll:
-			remove_child(n)
-			n.queue_free()
-	town = Town.new()
-	add_child(town)
-	town.build()
-	town.piece_released.connect(_on_piece_released)
+	if is_instance_valid(town) and town.legacy == legacy_world and not force_rebuild:
+		town.reset_in_place()          # fast path: no rebuild
+	else:
+		if is_instance_valid(town):
+			remove_child(town)
+			town.queue_free()
+		town = Town.new()
+		add_child(town)
+		town.build(legacy_world)
+		town.piece_released.connect(_on_piece_released)
 	scoring = Scoring.new()
 	scoring.awarded.connect(_on_awarded)
 	ragdoll = Ragdoll.new()
@@ -288,6 +324,10 @@ func reset() -> void:
 	frame_n = 0
 	frame_worst = 0.0
 	attempt += 1
+	_last_event = 0.0
+	_gap_done = false
+	_trav_dir = Vector3.RIGHT
+	_compute_aim_camera()
 	_set_aim_pose(Vector3.RIGHT, 0.0)
 	result_panel.visible = false
 	lbl_hint.visible = true
@@ -307,6 +347,9 @@ func _set_aim_pose(dir: Vector3, power: float) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
+			if state == State.FLIGHT and flight_t > SKIP_AFTER_S:
+				_finish()   # tap during the chaos = skip to the result (score kept)
+				return
 			if state == State.RESULT:
 				reset()   # tap anywhere = instant retry, and the same touch starts the next aim
 			if state == State.AIM:
@@ -330,13 +373,19 @@ func _unhandled_input(event: InputEvent) -> void:
 		_update_aim()
 
 func _update_aim() -> void:
-	var max_px: float = 190.0
-	var p: Vector2 = drag_vec / max_px
+	# decompose the finger drag in the camera-aligned basis: b = pull-back amount, sd = sideways amount
+	var det: float = _basis_back.x * _basis_side.y - _basis_back.y * _basis_side.x
+	var b: float = 0.0
+	var sd: float = 0.0
+	if absf(det) > 0.05:
+		b = (drag_vec.x * _basis_side.y - drag_vec.y * _basis_side.x) / det
+		sd = (_basis_back.x * drag_vec.y - _basis_back.y * drag_vec.x) / det
+	var p := Vector2(sd, b) / AIM_MAX_PX
 	if p.length() > 1.0:
 		p = p.normalized()
 	aim_power = p.length()
-	var up: float = clampf(p.y, 0.05, 1.0) * 1.6
-	var side: float = -p.x * 0.7
+	var up: float = clampf(p.y, 0.05, 1.0) * 1.6          # same elevation + power curve as G1/G2
+	var side: float = -p.x * SIDE_GAIN
 	aim_dir = Vector3(1.0, up, side).normalized()
 	_set_aim_pose(aim_dir, aim_power)
 	_update_preview()
@@ -352,7 +401,7 @@ func _update_preview() -> void:
 	var p0: Vector3 = ragdoll.centre()
 	var g: float = float(ProjectSettings.get_setting("physics/3d/default_gravity", 9.8))
 	for i in _dots.size():
-		var t: float = 0.1 * float(i + 1)
+		var t: float = 0.16 * float(i + 1)
 		var pos: Vector3 = p0 + v * t + Vector3(0, -0.5 * g * t * t, 0)
 		_dots[i].global_position = pos
 		_dots[i].visible = pos.y > 0.1 and aim_power >= MIN_POWER
@@ -362,7 +411,8 @@ func fire() -> void:
 	if state != State.AIM:
 		return
 	state = State.FLIGHT
-	t_launch = Time.get_ticks_msec() / 1000.0
+	t_launch = 0.0
+	flight_t = 0.0
 	for d in _dots:
 		d.visible = false
 	bar_bg.visible = false
@@ -380,11 +430,13 @@ func fire() -> void:
 func _on_impact(part: RigidBody3D, other: Node, speed: float, pos: Vector3) -> void:
 	if state != State.FLIGHT:
 		return
-	var now: float = Time.get_ticks_msec() / 1000.0
+	var now: float = flight_t
 	if t_first_impact < 0.0 and speed > 2.0:
 		t_first_impact = now
 		var air: float = now - t_launch
 		scoring.award("air", "AIRTIME %.1fs" % air, int(air * 40.0), "Airtime", pos)
+	if speed > 3.0:
+		_last_event = now
 	if speed > 4.0 and now - _last_sound > 0.06:
 		_last_sound = now
 		var heavy: bool = other.has_meta("kind") or other.has_meta("prop")
@@ -401,6 +453,9 @@ func _on_impact(part: RigidBody3D, other: Node, speed: float, pos: Vector3) -> v
 			sfx.play("crash", 2.0, randf_range(0.8, 1.1))
 			trauma = maxf(trauma, 0.7)
 	elif other.has_meta("prop") and speed > 6.0:
+		if other.has_meta("bonus"):
+			var bb: Dictionary = other.get_meta("bonus")
+			scoring.award(str(bb["key"]), str(bb["name"]), int(bb["pts"]), "Targets", pos)
 		scoring.award("hit_%d" % other.get_instance_id(), "WHAM!", 25, "Impacts", pos)
 		_burst(pos)
 	elif other.has_meta("ground") == false and not other.has_meta("kind") and not other.has_meta("prop") and speed > 10.0:
@@ -409,10 +464,11 @@ func _on_impact(part: RigidBody3D, other: Node, speed: float, pos: Vector3) -> v
 func _on_piece_released(p: RigidBody3D) -> void:
 	if state != State.FLIGHT:
 		return
+	_last_event = flight_t
 	scoring.add_smash(p.get_instance_id(), 12, p.global_position)
 	if p.has_meta("bonus"):
 		var b: Dictionary = p.get_meta("bonus")
-		scoring.award(str(b["key"]), str(b["name"]), int(b["pts"]), "Bonuses", p.global_position)
+		scoring.award(str(b["key"]), str(b["name"]), int(b["pts"]), "Targets", p.global_position)
 
 func _on_awarded(label: String, pts: int, world_pos: Vector3) -> void:
 	_update_hud()
@@ -443,12 +499,17 @@ func _burst(pos: Vector3) -> void:
 
 func _update_hud() -> void:
 	lbl_score.text = "%d" % scoring.total()
-	lbl_stats.text = "Best %d   Try #%d" % [best, attempt]
+	var hit: int = 0
+	for t in town.targets:
+		if scoring.keys.has(str(t["key"])):
+			hit += 1
+	lbl_stats.text = "Best %d   Try #%d   Targets %d/%d" % [best, attempt, hit, town.targets.size()]
 
 # ---------------------------------------------------------------- loop
 func _physics_process(dt: float) -> void:
 	if state != State.FLIGHT:
 		return
+	flight_t += dt
 	var c: Vector3 = ragdoll.centre()
 	scoring.set_distance(c.x)
 	flip_angle += ragdoll.torso.angular_velocity.length() * dt
@@ -457,21 +518,29 @@ func _physics_process(dt: float) -> void:
 		scoring.flips += 1
 		scoring.award("flip_%d" % scoring.flips, "FLIP x%d" % scoring.flips, 60, "Flips", c)
 	_update_hud()
-	# settle / out-of-bounds detection
-	var elapsed: float = Time.get_ticks_msec() / 1000.0 - t_launch
-	var slow: bool = ragdoll.max_speed() < 0.8
-	settle_timer = settle_timer + dt if (slow and elapsed > 1.0) else 0.0
-	if settle_timer > 1.0 or elapsed > 18.0 or c.y < -20.0 or c.x > 150.0:
+	# "Needle Gap": the torso crosses the gate plane inside the opening
+	if not _gap_done and not legacy_world and _prev_x < Town.GAP_X and c.x >= Town.GAP_X and absf(c.z) < Town.GAP_HALF and c.y < 6.5:
+		_gap_done = true
+		scoring.award("needle", "Needle Gap", 800, "Targets", c)
+	_prev_x = c.x
+	# end of flight: settled, or nothing interesting happening any more, or out of time/bounds
+	var now: float = flight_t
+	var elapsed: float = flight_t
+	var spd: float = ragdoll.max_speed()
+	settle_timer = settle_timer + dt if (spd < 1.0 and elapsed > 0.8) else 0.0
+	var quiet: bool = elapsed > 2.0 and (now - maxf(_last_event, t_launch)) > 2.5 and c.y < 1.6 and spd < 4.0
+	var oob: bool = c.y < -20.0 or c.x > Town.WORLD_X_MAX + 20.0 or absf(c.z) > Town.WORLD_Z + 20.0
+	if settle_timer > 0.6 or quiet or elapsed > MAX_FLIGHT_S or oob:
 		_finish()
 
 func _finish() -> void:
 	state = State.RESULT
 	var c: Vector3 = ragdoll.centre()
-	var d: float = Vector2(c.x - Town.TARGET_X, c.z).length()
-	if d < 2.5:
-		scoring.award("bullseye", "BULLSEYE!", 500, "Bonuses", c)
-	elif d < 8.0:
-		scoring.award("target", "LANDED ON TARGET", 150, "Bonuses", c)
+	var d: float = Vector2(c.x - town.bullseye.x, c.z - town.bullseye.y).length()
+	if d < town.bullseye_inner:
+		scoring.award("bullseye", "Bullseye", 500, "Targets", c)
+	elif d < town.bullseye_outer:
+		scoring.award("target", "Landed on target", 150, "Targets", c)
 	var total: int = scoring.total()
 	var new_best: bool = total > best
 	if new_best:
@@ -480,6 +549,11 @@ func _finish() -> void:
 	lbl_result.text = ("NEW BEST %d" if new_best else "SCORE %d") % total
 	var lines: Array[String] = scoring.summary_lines()
 	var avg: float = frame_sum / maxf(frame_n, 1)
+	var hit_names: Array[String] = []
+	for t in town.targets:
+		if scoring.keys.has(str(t["key"])):
+			hit_names.append(str(t["name"]))
+	lines.append("Targets: %d/%d  %s" % [hit_names.size(), town.targets.size(), ", ".join(hit_names)])
 	lines.append("frames avg %.1fms worst %.1fms" % [avg * 1000.0, frame_worst * 1000.0])
 	lbl_breakdown.text = "\n".join(lines)
 	result_panel.visible = true
@@ -495,34 +569,51 @@ func _process(dt: float) -> void:
 	_update_camera(dt)
 
 func _update_camera(dt: float) -> void:
-	var target_xf: Transform3D = _cam_aim_xf
 	if state != State.AIM and is_instance_valid(ragdoll):
 		var c: Vector3 = ragdoll.centre()
+		var v: Vector3 = ragdoll.torso.linear_velocity
+		var vh := Vector3(v.x, 0.0, v.z)
+		if vh.length() > 4.0:
+			_trav_dir = _trav_dir.slerp(vh.normalized(), 1.0 - exp(-3.0 * dt)).normalized()
 		if t_first_impact >= 0.0:
 			cam_blend = minf(cam_blend + dt * 0.6, 1.0)
-		var off: Vector3 = Vector3(-8.5, 3.2, 4.5).lerp(Vector3(-15.0, 6.5, 8.0), cam_blend)
-		var pos: Vector3 = c + off
-		pos.y = maxf(pos.y, 2.0)
-		var look: Vector3 = c + Vector3(3.0, 0.5, 0.0)
-		_cam_look = _cam_look.lerp(look, 1.0 - exp(-6.0 * dt))
-		target_xf = Transform3D(Basis.IDENTITY, pos).looking_at(_cam_look, Vector3.UP)
+		var speed: float = v.length()
+		var dist: float = lerpf(9.0 + clampf(speed * 0.22, 0.0, 6.0), 17.0, cam_blend)
+		var height: float = lerpf(3.4, 7.5, cam_blend) + clampf(c.y * 0.25, 0.0, 6.0)
+		var side := Vector3(-_trav_dir.z, 0.0, _trav_dir.x) * (4.5 if not view_right else -4.5)
+		var pos: Vector3 = c - _trav_dir * dist + side + Vector3(0, height, 0)
+		pos.x = clampf(pos.x, Town.WORLD_X_MIN + 2.0, Town.WORLD_X_MAX - 2.0)
+		pos.z = clampf(pos.z, -Town.WORLD_Z + 2.0, Town.WORLD_Z - 2.0)
+		pos.y = maxf(pos.y, 2.2)
+		var look: Vector3 = c + _trav_dir * 3.0 + Vector3(0, 0.5, 0)
+		_cam_look = _cam_look.lerp(look, 1.0 - exp(-7.0 * dt))
 		cam.global_position = cam.global_position.lerp(pos, 1.0 - exp(-4.0 * dt))
 		cam.look_at(_cam_look, Vector3.UP)
 	else:
-		_cam_look = Vector3(10, 2.4, 0)
-		cam.global_transform = cam.global_transform.interpolate_with(target_xf, 1.0 - exp(-10.0 * dt))
+		_cam_look = LAUNCH_ORIGIN
+		cam.global_transform = cam.global_transform.interpolate_with(_cam_aim_xf, 1.0 - exp(-10.0 * dt))
 	trauma = maxf(trauma - dt * 1.4, 0.0)
 	var t: float = Time.get_ticks_msec() * 0.001
-	var s: float = trauma * trauma
-	cam.h_offset = _noise.get_noise_2d(t * 60.0, 0.0) * 0.8 * s
-	cam.v_offset = _noise.get_noise_2d(0.0, t * 60.0) * 0.8 * s
+	var sh: float = trauma * trauma
+	cam.h_offset = _noise.get_noise_2d(t * 60.0, 0.0) * 0.8 * sh
+	cam.v_offset = _noise.get_noise_2d(0.0, t * 60.0) * 0.8 * sh
+
+func set_view_right(on: bool) -> void:
+	view_right = on
+	_compute_aim_camera()
+	var cf := ConfigFile.new()
+	cf.load("user://launch.cfg")
+	cf.set_value("view", "pull_right", on)
+	cf.save("user://launch.cfg")
 
 func _load_best() -> void:
 	var cf := ConfigFile.new()
 	if cf.load("user://launch.cfg") == OK:
 		best = int(cf.get_value("score", "best", 0))
+		view_right = bool(cf.get_value("view", "pull_right", false))
 
 func _save_best() -> void:
 	var cf := ConfigFile.new()
+	cf.load("user://launch.cfg")
 	cf.set_value("score", "best", best)
 	cf.save("user://launch.cfg")

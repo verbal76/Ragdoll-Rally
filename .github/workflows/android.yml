@@ -4,7 +4,7 @@ name: Android Launch POC
 # (The G1 line, Godot 4.4.1 / API 34, lives on branch ccr-7c0d7291-e3d5o1 with releases launch-poc-b2..b6.)
 on:
   push:
-    branches: [claude/launch-api36-modernization]
+    branches: [claude/launch-api36-modernization, claude/launch-expanded-playfield]
     paths:
       - 'launch/**'
       - '.github/workflows/android.yml'
@@ -85,7 +85,7 @@ jobs:
 
       - name: Set version
         run: |
-          sed -i "s/^version\/code=.*/version\/code=${{ github.run_number }}/; s/^version\/name=.*/version\/name=\"0.2.0-poc-api36\"/" launch/export_presets.cfg
+          sed -i "s/^version\/code=.*/version\/code=${{ github.run_number }}/; s/^version\/name=.*/version\/name=\"0.3.0-poc-expanded\"/" launch/export_presets.cfg
           grep -E '^version/|gradle_build/' launch/export_presets.cfg
 
       - name: Write build identity (build_info.json)
@@ -97,7 +97,7 @@ jobs:
           echo "template targetSdk=$TARGET minSdk=$MIN compileSdk=$COMPILE"
           test "$TARGET" = "36"
           python3 launch/tools/ota_tools.py build-info --out launch/build_info.json \
-            --version-name 0.2.0-poc-api36 --version-code ${{ github.run_number }} --sha "$GITHUB_SHA" \
+            --version-name 0.3.0-poc-expanded --version-code ${{ github.run_number }} --sha "$GITHUB_SHA" \
             --run ${{ github.run_number }} --channel poc-g2 --target-sdk "$TARGET" --min-sdk "$MIN" --compile-sdk "$COMPILE" \
             --generation "g2 (Godot 4.7.1, Gradle build, API 36)" \
             --manifest-url "https://github.com/${{ github.repository }}/releases/download/launch-ota-channel-poc-g2/manifest.json" \
@@ -113,6 +113,9 @@ jobs:
       - name: Verify (OTA / About / applying-update state machine)
         run: godot --headless --path launch -s tests/verify_ota.gd
 
+      - name: Verify (expanded playfield, aim mapping, targets, camera, reset)
+        run: godot --headless --path launch -s tests/verify_expanded.gd
+
       - name: Physics regression vs Godot 4.4.1 reference
         run: |
           godot --headless --path launch -s tests/physics_baseline.gd -- "$GITHUB_WORKSPACE/physics_ci.json"
@@ -122,7 +125,7 @@ jobs:
         id: export
         run: |
           SHA7=$(echo "$GITHUB_SHA" | cut -c1-7)
-          APK="ragdoll-rally-launch-g2-api36-${SHA7}-b${{ github.run_number }}.apk"
+          APK="ragdoll-rally-launch-g2-expanded-${SHA7}-b${{ github.run_number }}.apk"
           mkdir -p build
           godot --headless --path launch --export-debug "Android" "../build/$APK"
           ls -la build
@@ -133,7 +136,7 @@ jobs:
       - name: Verify APK artifact (identity, SDK, signing, native libs, 16 KB)
         run: |
           python3 launch/tools/verify_apk.py "${{ steps.export.outputs.apk }}" \
-            --package com.hotatticgames.ragdollrally.launch --version-name 0.2.0-poc-api36 \
+            --package com.hotatticgames.ragdollrally.launch --version-name 0.3.0-poc-expanded \
             --version-code ${{ github.run_number }} --min-sdk 24 --target-sdk 36 \
             --cert-sha256 "$SIGNING_CERT_SHA256" --json-out build/apk_report.json | tee build/apk_report.txt
           python3 - <<'PY'
@@ -153,14 +156,14 @@ jobs:
       - name: Publish prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: launch-g2-b${{ github.run_number }}
-          name: 'Launch G2 - Godot 4.7.1 / API 36 (b${{ github.run_number }})'
+          tag_name: launch-g2x-b${{ github.run_number }}
+          name: 'Launch G2 Expanded Playfield (b${{ github.run_number }})'
           prerelease: true
           target_commitish: ${{ github.sha }}
           body: |
-            Debug-signed arm64 APK, native generation G2 (Godot 4.7.1, Gradle build, targetSdk 36, 16 KB-verified in CI).
-            Same package and signing lineage as Launch b2/b6 (installs over them as an update); gameplay is unchanged, engine modernized.
-            Physics regression vs the Godot 4.4.1 reference passed in CI. Owner physical comparison against b2/b6 is still required.
+            Launch G2 + EXPANDED PLAYFIELD: three-quarter opening camera (pull back toward the lower-left corner), ~150 m wide/deep field
+            with 13 valued targets across left/center/right and near/far, camera that follows any direction, faster end-of-flight and tap-to-skip.
+            Slingshot power/curve unchanged. Native generation G2 (Godot 4.7.1, API 36, 16 KB-verified in CI). Same package/signing as b2..b7.
             Commit: ${{ github.sha }}
           files: |
             ${{ steps.export.outputs.apk }}

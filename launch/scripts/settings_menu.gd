@@ -4,7 +4,9 @@ extends Control
 ## Uses only the stable OtaClient surface: info, running, update_status(),
 ## last_status, last_check_unix, check_for_update().
 
+var main_ref: Node
 var _settings: PanelContainer
+var _view_btn: Button
 var _about: PanelContainer
 var _about_label: Label
 
@@ -21,10 +23,14 @@ func _ready() -> void:
 	gear.offset_top = -96
 	gear.offset_right = -16
 	gear.offset_bottom = -16
-	gear.pressed.connect(func(): _settings.visible = true)
+	gear.pressed.connect(func():
+		_refresh_view_btn()
+		_settings.visible = true)
 	add_child(gear)
-	_settings = _panel("SETTINGS", 520, 300)
+	_settings = _panel("SETTINGS", 640, 400)
 	var vb: VBoxContainer = _settings.get_child(0)
+	_view_btn = _button("", _toggle_view)
+	vb.add_child(_view_btn)
 	vb.add_child(_button("About", _open_about))
 	vb.add_child(_button("Close", func(): _settings.visible = false))
 	_about = _panel("ABOUT", 980, 640)
@@ -32,7 +38,10 @@ func _ready() -> void:
 	var sc := ScrollContainer.new()
 	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	sc.custom_minimum_size = Vector2(900, 420)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_about_label = Label.new()
+	_about_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_about_label.custom_minimum_size = Vector2(880, 0)
 	_about_label.add_theme_font_size_override("font_size", 22)
 	_about_label.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
 	sc.add_child(_about_label)
@@ -88,6 +97,15 @@ func _button(text: String, cb: Callable) -> Button:
 func _ota() -> Node:
 	return get_node_or_null("/root/Ota")
 
+func _toggle_view() -> void:
+	if main_ref and main_ref.has_method("set_view_right"):
+		main_ref.set_view_right(not bool(main_ref.view_right))
+	_refresh_view_btn()
+
+func _refresh_view_btn() -> void:
+	var right: bool = main_ref != null and bool(main_ref.get("view_right"))
+	_view_btn.text = "Pull view: lower-%s" % ("right" if right else "left")
+
 func _open_about() -> void:
 	_settings.visible = false
 	_about.visible = true
@@ -103,6 +121,11 @@ func _check() -> void:
 		await o.check_for_update()
 		_about_label.text = diagnostics_text(o)
 
+static func _n(v: Variant) -> String:
+	if v is float and (v as float) == floorf(v as float):
+		return str(int(v))
+	return str(v)
+
 ## Plain-text release identity. No secrets, no save data, no personal data.
 static func diagnostics_text(ota: Node) -> String:
 	var info: Dictionary = ota.info if ota else BuildInfo.load_info()
@@ -117,10 +140,10 @@ static func diagnostics_text(ota: Node) -> String:
 	L.append("INSTALL")
 	L.append("  Package: %s" % str(info.get("package_id")))
 	L.append("  Version: %s" % str(info.get("version_name")))
-	L.append("  Version code (native build): %s" % str(info.get("version_code")))
+	L.append("  Version code (native build): %s" % _n(info.get("version_code")))
 	L.append("  Native/runtime: Godot %s ; runtime-compat %s ; native generation %s" % [Engine.get_version_info().get("string", "?"), str(info.get("runtime_compat")), str(info.get("generation", "?"))])
 	L.append("  Source commit: %s" % str(info.get("source_sha")))
-	L.append("  Build: %s ; CI run %s ; built %s" % [str(info.get("build_type")), str(info.get("run_number")), str(info.get("built_at"))])
+	L.append("  Build: %s ; CI run %s ; built %s" % [str(info.get("build_type")), _n(info.get("run_number")), str(info.get("built_at"))])
 	L.append("OTA")
 	L.append("  Updates enabled: %s" % ("yes" if bool(info.get("ota_enabled", false)) else "no"))
 	L.append("  Channel: %s" % str(info.get("channel")))
@@ -128,7 +151,7 @@ static func diagnostics_text(ota: Node) -> String:
 	if run.is_empty():
 		L.append("  Running: EMBEDDED NATIVE BASELINE (no OTA applied)")
 	else:
-		L.append("  Running: OTA '%s' (id %s, sequence %s)" % [str(run.get("name")), str(run.get("id")), str(run.get("sequence"))])
+		L.append("  Running: OTA '%s' (id %s, sequence %s)" % [str(run.get("name")), str(run.get("id")), _n(run.get("sequence"))])
 		L.append("  OTA published: %s" % str(run.get("published_at")))
 		L.append("  OTA source commit: %s" % str(run.get("source_sha")))
 		L.append("  OTA SHA-256: %s" % str(run.get("sha256")))
@@ -139,7 +162,7 @@ static func diagnostics_text(ota: Node) -> String:
 		L.append("  Last result: %s" % ota.last_status)
 	L.append("GOOGLE PLAY / ANDROID")
 	L.append("  Target SDK: %s ; Min SDK: %s ; Compile SDK: %s" % [str(info.get("target_sdk")), str(info.get("min_sdk")), str(info.get("compile_sdk"))])
-	L.append("  Play required target API: %s (verified %s)" % [str(info.get("play_required_target_api")), str(info.get("play_required_verified"))])
+	L.append("  Play required target API: %s (verified %s)" % [_n(info.get("play_required_target_api")), str(info.get("play_required_verified"))])
 	L.append("  Play API compliant: %s" % BuildInfo.play_compliance(info))
 	L.append("  Signing: %s" % str(info.get("signing")))
 	return "\n".join(L)

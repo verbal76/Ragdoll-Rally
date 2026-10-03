@@ -22,6 +22,8 @@ func _init() -> void:
 			result["settings"][n] = str(ProjectSettings.get_setting(n))
 	var main: Node = (load("res://scenes/main.tscn") as PackedScene).instantiate()
 	root.add_child(main)
+	main.legacy_world = true     # original small village: comparable with the 4.4.1 reference
+	main.force_rebuild = OS.get_cmdline_user_args().size() > 1 and OS.get_cmdline_user_args()[1] == "rebuild"
 	for i in 4:
 		await physics_frame
 	result["launch_consts"] = {"MIN_SPEED": main.MIN_SPEED, "MAX_SPEED": main.MAX_SPEED, "gravity": ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)}
