@@ -1,5 +1,7 @@
 # Android / Google Play identity and readiness (Ragdoll Rally)
 
+> UPDATE 2026-10-03: the Class B migration below was authorized and performed on branch `claude/launch-api36-modernization` (native generation G2, Godot 4.7.1, targetSdk 36, 16 KB verified). See `LAUNCH_G2_MIGRATION.md`. The tables below describe generation G1 (b2-b6), which remains the reference.
+
 Scope: **Launch** (Godot, `launch/`) is the only app that exists in this repository today. **Original** (Matter.js/Capacitor) has not been built; everything below marked "Original" is N/A until it exists.
 Status labels: CONFIRMED (read from repo or the built APK) / OWNER (owner confirmation or Play Console action required).
 
