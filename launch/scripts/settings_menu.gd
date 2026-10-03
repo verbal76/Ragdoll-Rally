@@ -9,7 +9,7 @@ var _about: PanelContainer
 var _about_label: Label
 
 func _ready() -> void:
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var gear := Button.new()
 	gear.text = "⚙"
@@ -47,7 +47,10 @@ func _ready() -> void:
 
 func _panel(title: String, w: int, h: int) -> PanelContainer:
 	var p := PanelContainer.new()
-	p.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	p.anchor_left = 0.5
+	p.anchor_right = 0.5
+	p.anchor_top = 0.5
+	p.anchor_bottom = 0.5
 	p.offset_left = -w / 2
 	p.offset_right = w / 2
 	p.offset_top = -h / 2

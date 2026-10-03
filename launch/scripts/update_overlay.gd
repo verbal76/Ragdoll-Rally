@@ -17,11 +17,14 @@ func _init() -> void:
 func _ready() -> void:
 	_root = ColorRect.new()
 	(_root as ColorRect).color = Color(0, 0, 0, 0.78)
-	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_root.mouse_filter = Control.MOUSE_FILTER_STOP   # block all interaction underneath
 	add_child(_root)
 	var panel := PanelContainer.new()
-	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_bottom = 0.5
 	panel.offset_left = -330
 	panel.offset_right = 330
 	panel.offset_top = -110
@@ -46,6 +49,7 @@ func _ready() -> void:
 	vb.add_child(_label)
 	_spinner = Control.new()
 	_spinner.custom_minimum_size = Vector2(64, 64)
+	_spinner.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_spinner.draw.connect(_draw_spinner)
 	vb.add_child(_spinner)
 
