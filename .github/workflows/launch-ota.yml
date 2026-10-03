@@ -1,0 +1,72 @@
+name: Launch OTA publish
+
+# MANUAL ONLY. Publishing an OTA makes installed apps on that channel discover it
+# on their next launch, so it is never triggered automatically.
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'Human-readable OTA name (what changed)'
+        required: true
+      channel:
+        description: 'Channel (installed APKs follow "poc"; use "test" for pipeline checks)'
+        required: true
+        default: 'test'
+
+permissions:
+  contents: write
+
+env:
+  GODOT_BASE: https://github.com/godotengine/godot/releases/download/4.4.1-stable
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Godot (no export templates needed for a PCK)
+        run: |
+          curl -fsSL -o godot.zip "$GODOT_BASE/Godot_v4.4.1-stable_linux.x86_64.zip"
+          unzip -o -q godot.zip
+          sudo install -m 755 Godot_v4.4.1-stable_linux.x86_64 /usr/local/bin/godot
+
+      - name: Import + test
+        run: |
+          godot --headless --path launch --import || true
+          godot --headless --path launch -s tests/verify.gd
+          godot --headless --path launch -s tests/verify_ota.gd
+
+      - name: Build OTA pack + manifest
+        id: pack
+        run: |
+          SHA7=$(echo "$GITHUB_SHA" | cut -c1-7)
+          SEQ=${{ github.run_number }}
+          CH="${{ github.event.inputs.channel }}"
+          ID="${CH}-${SEQ}-${SHA7}"
+          mkdir -p out
+          godot --headless --path launch --export-pack "Launch OTA Pack" "$GITHUB_WORKSPACE/out/launch-ota-${ID}.pck"
+          test -s "out/launch-ota-${ID}.pck"
+          URL="https://github.com/${{ github.repository }}/releases/download/launch-ota-${ID}/launch-ota-${ID}.pck"
+          python3 launch/tools/ota_tools.py manifest --out out/manifest.json --pck "out/launch-ota-${ID}.pck" \
+            --id "$ID" --name "${{ github.event.inputs.name }}" --sequence "$SEQ" --sha "$GITHUB_SHA" \
+            --channel "$CH" --url "$URL"
+          cat out/manifest.json
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+          echo "channel=$CH" >> "$GITHUB_OUTPUT"
+
+      - name: Publish immutable OTA release + move channel pointer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ID="${{ steps.pack.outputs.id }}"
+          CH="${{ steps.pack.outputs.channel }}"
+          gh release create "launch-ota-${ID}" "out/launch-ota-${ID}.pck" "out/manifest.json" \
+            --title "Launch OTA ${ID}: ${{ github.event.inputs.name }}" --prerelease \
+            --notes "OTA payload. Commit ${GITHUB_SHA}. Channel ${CH}. Applies only to native builds whose runtime_compat matches manifest.json." \
+            --target "$GITHUB_SHA"
+          POINTER="launch-ota-channel-${CH}"
+          gh release view "$POINTER" >/dev/null 2>&1 || gh release create "$POINTER" --title "Launch OTA channel: ${CH}" --prerelease \
+            --notes "Channel pointer. manifest.json here is replaced on each OTA publish." --target "$GITHUB_SHA"
+          gh release upload "$POINTER" out/manifest.json --clobber

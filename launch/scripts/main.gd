@@ -71,7 +71,16 @@ func _ready() -> void:
 	_setup_ui()
 	_setup_particles()
 	_setup_dots()
+	ui.add_child(SettingsMenu.new())
 	reset()
+	_confirm_ota_later()
+
+func _confirm_ota_later() -> void:
+	# the OTA payload (if any) is promoted to known-good once the game has been running a few seconds
+	var ota: Node = get_node_or_null("/root/Ota")
+	if ota:
+		await get_tree().create_timer(3.0).timeout
+		ota.confirm_startup_success()
 
 # ---------------------------------------------------------------- setup
 func _setup_environment() -> void:

@@ -74,19 +74,32 @@ jobs:
 
       - name: Set version
         run: |
-          sed -i "s/^version\/code=.*/version\/code=${{ github.run_number }}/; s/^version\/name=.*/version\/name=\"0.1.0-poc\"/" launch/export_presets.cfg
+          sed -i "s/^version\/code=.*/version\/code=${{ github.run_number }}/; s/^version\/name=.*/version\/name=\"0.1.1-poc-infra\"/" launch/export_presets.cfg
           grep -E '^version/' launch/export_presets.cfg
+
+      - name: Write build identity (build_info.json)
+        run: |
+          T=~/.local/share/godot/export_templates/4.4.1.stable
+          AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt | tail -1)
+          BADGING=$("$AAPT" dump badging "$T/android_debug.apk")
+          TARGET=$(echo "$BADGING" | sed -n "s/.*targetSdkVersion:'\([0-9]*\)'.*/\1/p" | head -1)
+          MIN=$(echo "$BADGING" | sed -n "s/.*sdkVersion:'\([0-9]*\)'.*/\1/p" | head -1)
+          echo "template targetSdk=$TARGET minSdk=$MIN"
+          python3 launch/tools/ota_tools.py build-info --out launch/build_info.json \
+            --version-name 0.1.1-poc-infra --version-code ${{ github.run_number }} --sha "$GITHUB_SHA" \
+            --run ${{ github.run_number }} --channel poc --target-sdk "$TARGET" --min-sdk "$MIN" \
+            --manifest-url "https://github.com/${{ github.repository }}/releases/download/launch-ota-channel-poc/manifest.json" \
+            --signing "debug (throwaway key; not Play-ready)" --build-type debug
+          cat launch/build_info.json
 
       - name: Import project
         run: godot --headless --path launch --import || true
 
-      - name: Verify
-        run: |
-          if [ -f launch/tests/verify.gd ]; then
-            godot --headless --path launch -s tests/verify.gd
-          else
-            echo "no verify.gd, skipping"
-          fi
+      - name: Verify (game)
+        run: godot --headless --path launch -s tests/verify.gd
+
+      - name: Verify (OTA / About / applying-update state machine)
+        run: godot --headless --path launch -s tests/verify_ota.gd
 
       - name: Export APK
         id: export
@@ -100,6 +113,18 @@ jobs:
           echo "apk=build/$APK" >> "$GITHUB_OUTPUT"
           echo "name=$APK" >> "$GITHUB_OUTPUT"
 
+      - name: Verify APK identity
+        run: |
+          AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt | tail -1)
+          B=$("$AAPT" dump badging "${{ steps.export.outputs.apk }}")
+          echo "$B" | grep -E "^package:|targetSdkVersion|sdkVersion|uses-permission"
+          echo "$B" | grep -q "name='com.hotatticgames.ragdollrally.launch'"
+          echo "$B" | grep -q "versionName='0.1.1-poc-infra'"
+          echo "$B" | grep -q "versionCode='${{ github.run_number }}'"
+          echo "$B" | grep -q "android.permission.INTERNET"
+          unzip -l "${{ steps.export.outputs.apk }}" | grep -q "assets/build_info.json"
+          ls -l "${{ steps.export.outputs.apk }}"
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.export.outputs.name }}
@@ -109,10 +134,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: launch-poc-b${{ github.run_number }}
-          name: Launch POC b${{ github.run_number }}
+          name: Launch POC b${{ github.run_number }} (infra: About + OTA client; playfield unchanged)
           prerelease: true
           target_commitish: ${{ github.sha }}
           body: |
-            Debug-signed arm64 APK (Ragdoll Rally Launch POC).
+            Debug-signed arm64 APK (Ragdoll Rally Launch POC) - infrastructure build:
+            Settings -> About (+ Copy Diagnostics), self-discovering OTA client (channel poc), studio-splash support.
+            The playfield/gameplay is the same as b2. NOT Google Play ready (debug-signed, targetSdk 34).
             Commit: ${{ github.sha }}
           files: ${{ steps.export.outputs.apk }}
