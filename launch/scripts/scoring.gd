@@ -4,6 +4,7 @@ extends RefCounted
 ## object/event can never score twice.
 
 signal awarded(label: String, pts: int, world_pos: Vector3)
+signal claimed(key: String)
 
 var lines: Dictionary = {}   # category -> points
 var keys: Dictionary = {}    # unique keys already paid out
@@ -22,6 +23,8 @@ func award(key: String, label: String, pts: int, category: String, world_pos: Ve
 			return false
 		keys[key] = true
 	lines[category] = int(lines.get(category, 0)) + pts
+	if key != "":
+		claimed.emit(key)
 	awarded.emit(label, pts, world_pos)
 	return true
 
