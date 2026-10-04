@@ -5,6 +5,7 @@ extends Node3D
 ## The node itself stays at the origin; bodies carry world transforms.
 
 signal impact(part: RigidBody3D, other: Node, speed: float, point: Vector3)
+signal limb_lost(part: RigidBody3D)
 
 const CHAR_SCALE := 0.6
 const AIR_DRAG := 0.15        # project default linear damp (0.1) + body damp (0.05) = what G1/G2 flew with
@@ -19,6 +20,13 @@ var joint_count: int = 0
 var launched: bool = false
 var _air_free: bool = false      # reduced-drag flight (overdrive shots) until the first impact
 var _prev_vel: Dictionary = {}
+var joints: Dictionary = {}          # part name -> ConeTwistJoint3D
+var detached: Array[RigidBody3D] = []
+var burning: Dictionary = {}         # part name -> seconds of fire left
+var _flames: Dictionary = {}         # part name -> CPUParticles3D
+var fx: Dictionary = {}              # effective() numbers for this character + upgrades (empty = classic)
+var _flail_t: float = 0.0
+const MAX_OMEGA := 26.0
 
 static func scene_path(letter: String) -> String:
 	return "res://assets/kenney/blocky-characters/character-%s.glb" % letter
@@ -108,6 +116,7 @@ func _joint(part: String, anchor: Vector3, basis_local: Basis, swing: float, twi
 	j.node_b = j.get_path_to(_body(part))
 	j.set("swing_span", swing)
 	j.set("twist_span", twist)
+	joints[part] = j
 	joint_count += 1
 
 func _body(part: String) -> RigidBody3D:
@@ -116,9 +125,33 @@ func _body(part: String) -> RigidBody3D:
 			return b
 	return null
 
-func _physics_process(_dt: float) -> void:
+func _physics_process(dt: float) -> void:
 	for b in bodies:
 		_prev_vel[b] = b.linear_velocity
+	if not launched or fx.is_empty():
+		return
+	# keep limbs whipping: small random torque kicks while moving fast (controlled chaos, bounded)
+	_flail_t -= dt
+	var flail: float = float(fx.get("flail", 1.0))
+	if _flail_t <= 0.0:
+		_flail_t = 0.10
+		for b in bodies:
+			if b == torso or not is_instance_valid(b):
+				continue
+			var sp: float = b.linear_velocity.length()
+			if sp > 6.0:
+				var k: float = clampf(sp / 30.0, 0.0, 1.0) * flail * 3.2     # rad/s added per kick (bounded)
+				b.angular_velocity += Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * k
+	for b in bodies:
+		var w: float = b.angular_velocity.length()
+		if w > MAX_OMEGA:
+			b.angular_velocity = b.angular_velocity * (MAX_OMEGA / w)
+	# burn down
+	for pn in burning.keys():
+		burning[pn] = float(burning[pn]) - dt
+		if float(burning[pn]) <= 0.0:
+			burning.erase(pn)
+			_set_flame(str(pn), false)
 
 func _restore_drag() -> void:
 	if _air_free:
@@ -153,13 +186,142 @@ func launch(velocity: Vector3, spin: Vector3, drag_scale: float = 1.0) -> void:
 		b.freeze = false
 		b.linear_velocity = velocity
 		b.angular_velocity = Vector3.ZERO
-	torso.angular_velocity = spin
+	if fx.is_empty():
+		torso.angular_velocity = spin
+		for b in bodies:
+			if b != torso:
+				b.angular_velocity = spin * 0.4
+	else:
+		var sm: float = float(fx.get("spin_mult", 1.0))
+		var fl: float = float(fx.get("flail", 1.0))
+		torso.angular_velocity = spin * sm * 1.3
+		for b in bodies:
+			if b != torso:
+				# every limb gets its own whip so the body unfolds and flails immediately
+				b.angular_velocity = spin * 0.5 + Vector3(randf_range(-9, 9), randf_range(-9, 9), randf_range(-9, 9)) * fl
+
+## Per-character physics profile (+ upgrades). Looser, flailier joints; slidier/bouncier body.
+func apply_fx(p_fx: Dictionary) -> void:
+	fx = p_fx
+	var fl: float = float(fx.get("flail", 1.0))
 	for b in bodies:
-		if b != torso:
-			b.angular_velocity = spin * 0.4
+		var pm := b.physics_material_override
+		if pm:
+			pm.bounce = clampf(float(fx.get("restitution", 0.5)) * 0.6, 0.05, 0.6)
+			pm.friction = 0.5
+		b.gravity_scale = 1.8                       # comedy gravity: shorter, snappier arcs
+		if b == torso:
+			b.mass += float(fx.get("extra_mass", 0.0))
+			b.angular_damp = 0.12
+		else:
+			b.angular_damp = 0.10
+	for pn in joints.keys():
+		var j: ConeTwistJoint3D = joints[pn]
+		var swing: float = 2.7 if str(pn).begins_with("arm") else (2.3 if str(pn).begins_with("leg") else 1.35)
+		j.set("swing_span", minf(swing * (0.8 + 0.2 * fl), 2.9))
+		j.set("twist_span", 1.3)
+
+func part_of(body: RigidBody3D) -> String:
+	return String(body.name)
+
+## Which face of the torso took the hit (n = surface normal pointing out of the surface).
+func torso_face(n: Vector3) -> String:
+	var dz: float = torso.global_transform.basis.z.dot(n)
+	var dx: float = torso.global_transform.basis.x.dot(n)
+	if absf(dz) > 0.6:
+		return "back" if dz > 0.0 else "front"
+	if absf(dx) > 0.6:
+		return "side"
+	return "front"
+
+## Tear a limb off. It keeps its velocity and keeps colliding as an independent body.
+func detach(part: String, kick: Vector3 = Vector3.ZERO) -> RigidBody3D:
+	var b: RigidBody3D = _body(part)
+	if b == null or b == torso or detached.has(b):
+		return null
+	var j: ConeTwistJoint3D = joints.get(part)
+	if j and is_instance_valid(j):
+		j.queue_free()
+	joints.erase(part)
+	detached.append(b)
+	b.set_meta("detached", true)
+	b.angular_damp = 0.05
+	b.apply_central_impulse(kick * b.mass)
+	b.angular_velocity = Vector3(randf_range(-12, 12), randf_range(-12, 12), randf_range(-12, 12))
+	limb_lost.emit(b)
+	return b
+
+func is_detached(b: RigidBody3D) -> bool:
+	return detached.has(b)
+
+func ignite_part(part: String, seconds: float) -> void:
+	if not burning.has(part):
+		_set_flame(part, true)
+	burning[part] = maxf(float(burning.get(part, 0.0)), seconds)
+
+func ignite_all(seconds: float) -> void:
+	for b in bodies:
+		ignite_part(String(b.name), seconds)
+
+func is_burning(part: String) -> bool:
+	return burning.has(part)
+
+func burning_bodies() -> Array[RigidBody3D]:
+	var out: Array[RigidBody3D] = []
+	for b in bodies:
+		if burning.has(String(b.name)):
+			out.append(b)
+	return out
+
+func _set_flame(part: String, on: bool) -> void:
+	var b: RigidBody3D = _body(part)
+	if b == null:
+		return
+	var f: CPUParticles3D = _flames.get(part)
+	if f == null and on:
+		f = CPUParticles3D.new()
+		f.amount = 14
+		f.lifetime = 0.55
+		f.direction = Vector3.UP
+		f.spread = 35.0
+		f.initial_velocity_min = 1.5
+		f.initial_velocity_max = 3.5
+		f.gravity = Vector3(0, 4.0, 0)
+		f.top_level = false
+		var qm := QuadMesh.new()
+		qm.size = Vector2(0.45, 0.45)
+		var m := StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+		m.albedo_color = Color(1.0, 0.55, 0.1, 0.85)
+		m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		qm.material = m
+		f.mesh = qm
+		f.scale_amount_min = 0.5
+		f.scale_amount_max = 1.2
+		b.add_child(f)
+		_flames[part] = f
+	if f:
+		f.emitting = on
+		f.visible = on
 
 func centre() -> Vector3:
 	return torso.global_position
+
+## Speed that matters for "is the action over": the torso plus any limbs that flew off on their own
+## (loose attached limbs whipping around must not keep a finished run alive).
+func motion_speed() -> float:
+	var m: float = torso.linear_velocity.length()
+	for b in detached:
+		if is_instance_valid(b):
+			m = maxf(m, b.linear_velocity.length())
+	return m
+
+func clamp_omega(b: RigidBody3D) -> void:
+	var w: float = b.angular_velocity.length()
+	if w > MAX_OMEGA:
+		b.angular_velocity = b.angular_velocity * (MAX_OMEGA / w)
 
 func max_speed() -> float:
 	var m: float = 0.0
@@ -174,6 +336,6 @@ func is_finite_and_sane() -> bool:
 			return false
 		if b.linear_velocity.length() > 120.0:
 			return false
-		if p.distance_to(torso.global_position) > 6.0:
+		if p.distance_to(torso.global_position) > 6.0 and not detached.has(b):
 			return false
 	return true

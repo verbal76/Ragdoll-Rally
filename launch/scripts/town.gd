@@ -4,7 +4,11 @@ extends Node3D
 ## Fantasy Kit pieces. Pieces start frozen (static) and switch to physics when
 ## struck hard enough (cheap "destruction"). Props are ordinary rigid bodies.
 
+const Rules := preload("res://scripts/rules.gd")
+
 signal piece_released(piece: RigidBody3D)
+signal ignited(node: Node3D, pos: Vector3)
+signal burned(node: Node3D, pos: Vector3)
 
 const KIT := "res://assets/kenney/retro-fantasy-kit/%s.glb"
 const S := 1.5          # kit unit -> metres
@@ -37,15 +41,37 @@ var _decor_trees: Array[Transform3D] = []
 var _occupied: Array[Vector2] = []
 var static_pos: Array[Vector3] = []     # immovable kit pieces (castle walls, gates...), for density checks
 var _cap_timer: float = 0.0
+# --- fire (combustible registry; the spread maths lives in Rules.fire_step)
+var fx: Node = null                       # effects pool (set by main)
+var fire_nodes: Array[Node3D] = []
+var fire_pos: Array = []
+var fire_state := PackedInt32Array()
+var fire_timer := PackedFloat32Array()
+var fire_handle: Array[int] = []
+var _fire_grid: Dictionary = {}
+var _fire_idx: Dictionary = {}
+var fire_spread_mult: float = 1.0
+var _fire_acc: float = 0.0
+var burning_count: int = 0
+var _burnt_static: Array[Node3D] = []
+# --- breakable glass + yard bits
+var glass: Array[StaticBody3D] = []
+var _broken_glass: Array[StaticBody3D] = []
+var env_id: String = "city"
 var smash_push: float = 0.45            # debris launch factor (0.8 in the mayhem tuning)
 
-func build(p_legacy: bool = false) -> void:
+func build(p_legacy: bool = false, p_env: String = "city") -> void:
 	legacy = p_legacy
+	env_id = p_env
 	smash_push = 0.45 if legacy else 0.8
 	_phys_stone.friction = 0.8 if legacy else 0.6
 	_phys_stone.bounce = 0.12 if legacy else 0.4
 	_ground()
 	_launcher()
+	if env_id == "yard" and not legacy:
+		build_yard()
+		_perimeter()
+		return
 	_house()
 	_tower()
 	_small_house()
@@ -91,6 +117,7 @@ func _ground() -> void:
 	var g := StaticBody3D.new()
 	g.name = "Ground"
 	g.set_meta("ground", true)
+	g.set_meta("mat", "ground")
 	g.collision_layer = 1
 	g.collision_mask = 0
 	var pm := PhysicsMaterial.new()
@@ -166,10 +193,14 @@ func _piece(model: String, tile: Vector3, kind: String, group: String, size: Vec
 	b.set_meta("group", group)
 	b.set_meta("tough", tough)
 	b.set_meta("frozen_piece", true)
+	var mat_name: String = Rules.material_of_model(model)
+	b.set_meta("mat", mat_name)
 	b.freeze_mode = RigidBody3D.FREEZE_MODE_STATIC
 	b.freeze = true
 	add_child(b)
 	pieces.append(b)
+	if bool(Rules.MATERIALS[mat_name]["fire"]):
+		register_combustible(b)
 	if not groups.has(group):
 		groups[group] = []
 	(groups[group] as Array).append(b)
@@ -192,6 +223,7 @@ func _static_kit(model: String, tile: Vector3, size: Vector3 = Vector3.ONE) -> S
 	m.scale = Vector3.ONE * S
 	m.position = Vector3(0, -h * 0.5, 0)
 	b.add_child(m)
+	b.set_meta("mat", Rules.material_of_model(model))
 	add_child(b)
 	return b
 
@@ -217,9 +249,13 @@ func _prop(model: String, pos: Vector3, real_size: Vector3, mass: float, scale_m
 	b.add_child(m)
 	b.set_meta("prop", true)
 	b.set_meta("rest", b.position)
+	var pmat: String = Rules.material_of_model(model)
+	b.set_meta("mat", pmat)
 	add_child(b)
 	b.sleeping = true
 	props.append(b)
+	if bool(Rules.MATERIALS[pmat]["fire"]):
+		register_combustible(b)
 	return b
 
 # --------------------------------------------------------------- structures
@@ -589,10 +625,17 @@ func _tree(s: Vector3) -> void:
 	var m := _kit("tree-large")
 	m.scale = Vector3.ONE * 2.2
 	t.add_child(m)
+	t.set_meta("mat", "wood")
 	add_child(t)
+	register_combustible(t)
 
 # ------------------------------------------------------ bounded active physics
 func _physics_process(dt: float) -> void:
+	_fire_acc += dt
+	if _fire_acc >= 0.25:
+		if burning_count > 0:
+			_fire_tick(_fire_acc)
+		_fire_acc = 0.0
 	_cap_timer += dt
 	if _cap_timer >= 0.5:
 		_cap_timer = 0.0
@@ -654,6 +697,8 @@ func reset_in_place() -> void:
 		b.sleeping = true
 	released_order.clear()
 	_restore_decor()
+	_restore_glass()
+	fire_reset()
 
 # ------------------------------------------------------------ the deep city (60-200 m)
 func _reserve(x0: float, z0: float, x1: float, z1: float) -> void:
@@ -747,8 +792,10 @@ func _decor_cottage(x: float, z: float, yaw: float) -> void:
 	b.add_child(cs)
 	b.set_meta("decor", decor_bodies.size())
 	b.set_meta("w0", w0)
+	b.set_meta("mat", "wood")
 	add_child(b)
 	decor_bodies.append(b)
+	register_combustible(b)
 
 func _decor_tree(x: float, z: float) -> void:
 	_decor_trees.append(Transform3D(Basis.from_scale(Vector3.ONE * 2.2), Vector3(x, 0, z)))
@@ -764,8 +811,10 @@ func _decor_tree(x: float, z: float) -> void:
 	b.add_child(cs)
 	b.set_meta("decor", decor_bodies.size())
 	b.set_meta("tree", _decor_trees.size() - 1)
+	b.set_meta("mat", "wood")
 	add_child(b)
 	decor_bodies.append(b)
+	register_combustible(b)
 
 func _mesh_of(model: String) -> Mesh:
 	var inst := _kit(model)
@@ -1008,6 +1057,8 @@ func explode(center: Vector3, radius: float, power: float) -> Dictionary:
 				b.collision_layer = 0
 				b.freeze = true
 				queue.append(b.global_position)
+	for c in blasts:
+		ignite_near(c, radius * 0.9, 0.75)
 	return {"released": released, "blasts": blasts}
 
 ## Barrel the ragdoll just hit: detonate it (and its chain).
@@ -1019,3 +1070,246 @@ func detonate(b: RigidBody3D) -> Dictionary:
 	b.collision_layer = 0
 	b.freeze = true
 	return explode(b.global_position, 9.0, 22.0)
+
+
+# ================================================================== fire engine
+## Everything that can burn registers here. The spread maths is Rules.fire_step (capped + bounded).
+func register_combustible(n: Node3D) -> void:
+	_fire_idx[n.get_instance_id()] = fire_nodes.size()
+	fire_nodes.append(n)
+	fire_pos.append(n.position)
+	fire_state.append(0)
+	fire_timer.append(0.0)
+	fire_handle.append(-1)
+	var key := Vector2i(int(floor(n.position.x / 4.0)), int(floor(n.position.z / 4.0)))
+	var arr: PackedInt32Array = _fire_grid.get(key, PackedInt32Array())
+	arr.append(fire_nodes.size() - 1)
+	_fire_grid[key] = arr
+
+func is_combustible(n: Node) -> bool:
+	return _fire_idx.has(n.get_instance_id())
+
+func ignite_node(n: Node3D) -> bool:
+	var id: int = n.get_instance_id()
+	if not _fire_idx.has(id):
+		return false
+	return _ignite_idx(int(_fire_idx[id]))
+
+func _ignite_idx(i: int) -> bool:
+	if fire_state[i] != 0 or burning_count >= Rules.FIRE_CAP:
+		return false
+	fire_state[i] = 1
+	fire_timer[i] = 0.0
+	burning_count += 1
+	var n: Node3D = fire_nodes[i]
+	var pos: Vector3 = n.global_position + Vector3(0, 1.0, 0)
+	if fx:
+		fire_handle[i] = fx.flame_start(pos, n.get_instance_id())
+	ignited.emit(n, pos)
+	return true
+
+## Light every fuel object within r of pos (probability p each). Returns how many caught.
+func ignite_near(pos: Vector3, r: float, p: float = 1.0) -> int:
+	var cnt: int = 0
+	var c0 := Vector2i(int(floor((pos.x - r) / 4.0)), int(floor((pos.z - r) / 4.0)))
+	var c1 := Vector2i(int(floor((pos.x + r) / 4.0)), int(floor((pos.z + r) / 4.0)))
+	for cx in range(c0.x, c1.x + 1):
+		for cz in range(c0.y, c1.y + 1):
+			var arr = _fire_grid.get(Vector2i(cx, cz))
+			if arr == null:
+				continue
+			for i in arr:
+				if fire_state[i] == 0 and (fire_nodes[i] as Node3D).global_position.distance_to(pos) <= r and (p >= 1.0 or randf() < p):
+					if _ignite_idx(i):
+						cnt += 1
+	return cnt
+
+func _fire_tick(dt: float) -> void:
+	var res: Dictionary = Rules.fire_step(fire_pos, fire_state, fire_timer, dt, fire_spread_mult, [], _fire_grid, 4.0)
+	for i in (res["ignite"] as Array):
+		var n: Node3D = fire_nodes[i]
+		var pos: Vector3 = n.global_position + Vector3(0, 1.0, 0)
+		if fx:
+			fire_handle[i] = fx.flame_start(pos, n.get_instance_id())
+		ignited.emit(n, pos)
+	for i in (res["burnt"] as Array):
+		_burn_out(int(i))
+	burning_count = 0
+	for i in fire_state.size():
+		if fire_state[i] == 1:
+			burning_count += 1
+			if fx and fire_handle[i] >= 0:
+				fx.flame_move(fire_handle[i], (fire_nodes[i] as Node3D).global_position + Vector3(0, 1.0, 0))
+
+func _burn_out(i: int) -> void:
+	var n: Node3D = fire_nodes[i]
+	if fx and fire_handle[i] >= 0:
+		fx.flame_stop(fire_handle[i])
+		fire_handle[i] = -1
+	if not is_instance_valid(n):
+		return
+	var pos: Vector3 = n.global_position + Vector3(0, 1.0, 0)
+	if fx:
+		fx.smoke_at(pos)
+	if n.has_meta("kind"):                      # a burnt timber piece gives way and collapses
+		var p := n as RigidBody3D
+		if p.freeze:
+			release(p, Vector3(0, 1.0, 0))
+	elif n.has_meta("decor"):
+		break_decor(n as StaticBody3D, Vector3.UP, 6.0)
+	elif n.has_meta("prop"):
+		if not n.has_meta("explosive"):         # TNT is handled by main (it explodes when burnt)
+			(n as RigidBody3D).visible = false
+			(n as RigidBody3D).collision_layer = 0
+			(n as RigidBody3D).freeze = true
+	else:
+		n.visible = false
+		if n is StaticBody3D:
+			(n as StaticBody3D).collision_layer = 0
+		_burnt_static.append(n)
+	burned.emit(n, pos)
+
+func fire_reset() -> void:
+	for i in fire_state.size():
+		fire_state[i] = 0
+		fire_timer[i] = 0.0
+		fire_handle[i] = -1
+	burning_count = 0
+	for n in _burnt_static:
+		if is_instance_valid(n):
+			n.visible = true
+			if n is StaticBody3D:
+				(n as StaticBody3D).collision_layer = 1
+	_burnt_static.clear()
+	if fx:
+		fx.clear_all()
+
+# ================================================================== glass
+func _glass_pane(pos: Vector3, size: Vector3) -> StaticBody3D:
+	var b := StaticBody3D.new()
+	b.collision_layer = 1
+	b.collision_mask = 0
+	b.position = pos
+	var cs := CollisionShape3D.new()
+	var sh := BoxShape3D.new()
+	sh.size = size
+	cs.shape = sh
+	b.add_child(cs)
+	var mi := _box_mesh(size, Color(0.6, 0.9, 1.0, 0.35))
+	((mi.mesh as BoxMesh).material as StandardMaterial3D).transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	b.add_child(mi)
+	b.set_meta("mat", "glass")
+	b.set_meta("glass", true)
+	b.set_meta("half", size * 0.5)
+	add_child(b)
+	glass.append(b)
+	return b
+
+func break_glass(b: StaticBody3D) -> bool:
+	if b.collision_layer == 0:
+		return false
+	b.collision_layer = 0
+	b.visible = false
+	_broken_glass.append(b)
+	return true
+
+func _restore_glass() -> void:
+	for b in _broken_glass:
+		b.collision_layer = 1
+		b.visible = true
+	_broken_glass.clear()
+
+# ================================================================== RAGDOLL TEST YARD
+## Compact chaos lab, ~110 m long: every system gets something to hit.
+func _yard_box(pos: Vector3, size: Vector3, color: Color, mat: String, basis: Basis = Basis.IDENTITY) -> StaticBody3D:
+	var b := _static_box(pos, size, color)
+	b.transform = Transform3D(basis, pos)
+	b.set_meta("mat", mat)
+	b.set_meta("half", size * 0.5)
+	return b
+
+func _wood_house(tx: int, tz: int, w: int, d: int, floors: int, group: String) -> void:
+	for f in floors:
+		for i in w:
+			for j in d:
+				var model: String = "wall-pane-wood"
+				if f == 0 and i == 0 and j == d / 2:
+					model = "wall-pane-wood-door"
+				elif f == 0 and i == 0:
+					model = "wall-pane-wood-window"
+				_piece(model, Vector3(tx + i, f, tz + j), "wall", group, Vector3.ONE, 2.2, 3.5)
+	for i in w:
+		for j in d:
+			_piece("roof", Vector3(tx + i, floors, tz + j), "roof", group, Vector3.ONE, 2.0, 4.0)
+
+func _dist_marker(x: float) -> void:
+	var l := Label3D.new()
+	l.text = "%d m" % int(x)
+	l.font_size = 64
+	l.pixel_size = 0.012
+	l.rotation_degrees = Vector3(-90, 0, 0)
+	l.position = Vector3(x, 0.08, -4.5)
+	add_child(l)
+	var line := _box_mesh(Vector3(0.3, 0.04, 9.0), Color(1, 1, 1))
+	line.position = Vector3(x, 0.04, 0)
+	add_child(line)
+
+func build_yard() -> void:
+	smash_push = 0.9
+	for x in [20, 40, 60, 80, 100]:
+		_dist_marker(float(x))
+	# 1) shop front: a wall of glass panes in a timber frame (glass is cheap to break, satisfying to burst through)
+	for k in 5:
+		var z: float = -9.0 + 4.5 * k
+		var gp := _glass_pane(Vector3(30.0, 1.9, z), Vector3(0.25, 3.4, 4.0))
+		if k == 2:
+			_bonus(gp, "shop", "Shop Window", 150)
+	for k in 6:
+		_yard_box(Vector3(30.0, 2.0, -11.25 + 4.5 * k), Vector3(0.5, 4.0, 0.5), Color(0.5, 0.32, 0.16), "wood")
+	_yard_box(Vector3(30.0, 4.15, 0.0), Vector3(0.6, 0.5, 24.0), Color(0.5, 0.32, 0.16), "wood")
+	# 2) trampolines (springy surfaces)
+	var tp := _yard_box(Vector3(22.0, 0.3, 15.0), Vector3(7.0, 0.6, 7.0), Color(0.9, 0.2, 0.55), "trampoline")
+	_bonus(tp, "tramp", "Trampoline", 100)
+	_yard_box(Vector3(52.0, 0.3, -19.0), Vector3(7.0, 0.6, 7.0), Color(0.2, 0.7, 0.95), "trampoline")
+	# 3) tilted metal billboard on poles: hard ricochet + sparks
+	for z in [-3.0, 3.0]:
+		_yard_box(Vector3(44.0, 2.4, z), Vector3(0.5, 4.8, 0.5), Color(0.35, 0.35, 0.4), "metal")
+	var sign_b := _yard_box(Vector3(43.4, 6.0, 0.0), Vector3(0.4, 5.0, 8.5), Color(0.78, 0.8, 0.86), "metal", Basis(Vector3.BACK, deg_to_rad(-32.0)))
+	_bonus(sign_b, "sign", "Billboard", 200)
+	# 4) timber district: wood houses close together + stalls + trees (fire spreads here)
+	_wood_house(32, -9, 3, 2, 1, "timber_a")
+	_wood_house(36, -9, 2, 2, 2, "timber_b")
+	_wood_house(36, -5, 2, 2, 1, "timber_c")
+	var tb: RigidBody3D = _pieces_in("timber_b")[0]
+	_bonus(tb, "timber", "Timber Hall", 250)
+	for i in 4:
+		_prop("detail-crate", Vector3(51.0 + i * 1.1, 0.0, -9.0), Vector3(0.75, 0.75, 0.75), 1.6)
+		_prop("fence-wood", Vector3(51.0 + i * 1.6, 0.0, -11.0), Vector3(1.5, 0.9, 0.2), 1.2)
+	for p in [Vector3(48, 0, -14), Vector3(56, 0, -13), Vector3(60, 0, -9), Vector3(47, 0, -2)]:
+		_tree(p)
+	# 5) masonry house with a pitched roof: ricochet off the roof, crack through the walls
+	var stone := _building(42, 3, 3, 2, 2, "stonehouse", false, true, 1)
+	if stone:
+		_bonus(stone, "stonewin", "Stone Window", 150)
+	# 6) TNT shack: barrels beside a wooden shack. Boom -> fire
+	for k in 4:
+		_tnt_barrel(70.0 + (k % 2) * 1.2, 16.0 + (k / 2) * 1.2)
+	_wood_house(43, 13, 2, 2, 1, "tntshack")
+	_prop("detail-crate", Vector3(68.5, 0.0, 17.0), Vector3(0.75, 0.75, 0.75), 1.6)
+	# 7) elevated target: a keep tower
+	var keep := _tower_stack(58, 0, 7, "keep")
+	_bonus(keep, "keep", "Elevated Keep", 600)
+	# 8) backstop wall (static, high-resistance masonry)
+	for tz in range(-5, 6):
+		for ty in 3:
+			_static_kit("wall-fortified", Vector3(70, ty, tz))
+	# 9) a second masonry building for secondary ricochets
+	_building(50, -5, 2, 3, 2, "annex", true, true, -1)
+	_scatter_scenery_yard()
+
+func _scatter_scenery_yard() -> void:
+	for p in [Vector3(8, 0, -10), Vector3(9, 0, 12), Vector3(18, 0, -14), Vector3(60, 0, 22), Vector3(78, 0, -12), Vector3(80, 0, 14)]:
+		_tree(p)
+
+func _pieces_in(group: String) -> Array:
+	return groups.get(group, [])

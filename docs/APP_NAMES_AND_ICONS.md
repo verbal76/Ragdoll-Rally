@@ -1,13 +1,13 @@
-# App names and icons
+# App name and icon
 
-Two separate apps. User-facing names are only **RR Launch** and **RR Legacy**.
+There is ONE product: **RAGDOLL RALLY LAUNCH** (phone label: "RR Launch").
+The separate "Legacy" app was cancelled: there is no recoverable original game and a fake historical version will not be manufactured.
 
-| App | Name on phone | Package | Icon files | Status |
-|---|---|---|---|---|
-| RR Launch | RR Launch | com.hotatticgames.ragdollrally.launch | `launch/branding/RR_Launch_*` (wired into the Android export) | Builds from `launch/` |
-| RR Legacy | RR Legacy | (own package, to be set when built) | `legacy/branding/RR_Legacy_*` | NOT BUILT: the original game's source is not in this repository |
+| | |
+|---|---|
+| Name on phone | RR Launch |
+| Package | com.hotatticgames.ragdollrally.launch (unchanged: updates install over earlier builds) |
+| Icon files | `launch/branding/RR_Launch_*` (transparent background; wired into the Android export) |
+| Master art | `branding/RR_Launch_Icon.png` |
 
-Masters (full-size, from the owner): `branding/RR_Launch_Icon.png`, `branding/RR_Legacy_Icon.png`.
-Per-app derived sizes: main 192x192, adaptive foreground 432x432 (art on transparent), adaptive background 432x432 (fully transparent: no colour block behind the art), 512x512.
-
-Releases are named `RR Launch (build N)`, tag `rr-launch-bN`, file `RR-Launch-bN-<commit>.apk`.
+Releases are named `RR Launch (build N)`, tag `rr-launch-bN`, file `RR-Launch-PIVOT-bN-<commit>.apk`.

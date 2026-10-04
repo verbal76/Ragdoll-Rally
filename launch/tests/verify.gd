@@ -22,6 +22,8 @@ func _run() -> void:
 	var ps: PackedScene = load("res://scenes/main.tscn")
 	check(ps != null, "main scene loads")
 	var main: Node = ps.instantiate()
+	main.skip_select = true
+	main.env_idx = 1                 # the b9 city map (these tests are about it)
 	root.add_child(main)
 	await frames(5)
 	check(main.state == 0, "starts in AIM")

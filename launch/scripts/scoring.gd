@@ -10,6 +10,14 @@ var lines: Dictionary = {}   # category -> points
 var keys: Dictionary = {}    # unique keys already paid out
 var smashed: int = 0
 var flips: int = 0
+var combo_enabled: bool = false     # pivot: chained events within a short window multiply points
+var combo: int = 0
+var best_combo: int = 0
+var combo_t: float = -99.0
+var clock: float = 0.0              # seconds since launch (set by the game each physics frame)
+const Rules := preload("res://scripts/rules.gd")
+const COMBO_WINDOW := 1.6
+const NO_COMBO := ["Distance", "Airtime"]
 
 func total() -> int:
 	var t: int = 0
@@ -22,6 +30,13 @@ func award(key: String, label: String, pts: int, category: String, world_pos: Ve
 		if keys.has(key):
 			return false
 		keys[key] = true
+	if combo_enabled and not NO_COMBO.has(category):
+		if clock - combo_t > COMBO_WINDOW:
+			combo = 0
+		combo += 1
+		combo_t = clock
+		best_combo = maxi(best_combo, combo)
+		pts = int(round(float(pts) * Rules.combo_mult(combo)))
 	lines[category] = int(lines.get(category, 0)) + pts
 	if key != "":
 		claimed.emit(key)

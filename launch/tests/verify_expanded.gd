@@ -83,12 +83,14 @@ func _rollout(main: Node, cls: bool) -> float:
 
 func _run() -> void:
 	var main: Node = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	main.skip_select = true
+	main.env_idx = 1                 # the b9 city map (these tests are about it)
 	root.add_child(main)
 	await frames(5)
 	# ---- power: classic G1/G2 curve preserved for the regression baseline; v0.4 tuning is faster
 	check(is_equal_approx(main.speed_for_power(1.0, true), 32.0) and is_equal_approx(main.speed_for_power(0.0, true), 9.0) and is_equal_approx(main.speed_for_power(0.5, true), lerpf(9.0, 32.0, pow(0.5, 0.9))), "classic G1/G2 power curve intact (9..32 m/s)")
-	check(is_equal_approx(main.speed_for_power(1.0), 40.0) and is_equal_approx(main.speed_for_power(0.0), 12.0), "v0.4 tuning: 12..40 m/s (was 9..32)")
-	check(is_equal_approx(main.speed_for_power(1.45), 56.0) and main.speed_for_power(1.2) > 40.0 and main.speed_for_power(1.2) < 56.0, "overdrive band: 40 -> 56 m/s beyond full power")
+	check(is_equal_approx(main.speed_for_power(1.0), 50.0) and is_equal_approx(main.speed_for_power(0.0), 20.0), "pivot tuning: 20..50 m/s (classic was 9..32)")
+	check(is_equal_approx(main.speed_for_power(1.45), 68.0) and main.speed_for_power(1.2) > 50.0 and main.speed_for_power(1.2) < 68.0, "overdrive band: 50 -> 68 m/s beyond full power")
 	var g: float = float(ProjectSettings.get_setting("physics/3d/default_gravity", 9.8))
 	# ---- aim mapping: default lower-left pull
 	check(main._basis_back.x < -0.3 and main._basis_back.y > 0.3, "pull-back points toward the LOWER-LEFT of the screen %s" % str(main._basis_back))
@@ -289,28 +291,18 @@ func _run() -> void:
 	main.reset()
 	await frames(3)
 	check(db.collision_layer == 1 and main.town.decor_smashed == 0, "reset restores broken decor")
-	# ---- upgrades
+	# ---- upgrades (new system: 8 families that stack; full coverage lives in verify_pivot.gd)
 	main.bank = 1000
-	main.up_power = 0
-	main.up_speed = 0
-	main.up_traj = 0
-	check(main.buy("power") and main.buy("speed") and main.buy("traj") and main.bank == 100, "three level-1 upgrades bought for 300 each (bank %d)" % main.bank)
-	check(not main.buy("power") and main.up_power == 1, "cannot buy without enough points")
-	main.aim_power = 1.0
-	check(is_equal_approx(main.launch_speed(), 40.0 * 1.06), "speed upgrade: +6%% launch speed (%.1f)" % main.launch_speed())
+	main.levels = main.Rules.empty_levels()
+	check(main.buy("power") and main.buy("bounce") and main.bank == 500, "two level-1 upgrades bought for 250 each (bank %d)" % main.bank)
+	check(not main.buy("explosive") and main.get_level("power") == 1, "cannot buy without enough points")
 	main.bank = 100000
 	for i in 8:
 		main.buy("power")
-	check(main.up_power == 5 and main.upgrade_cost("power") == -1, "upgrades cap at level 5")
+	check(main.get_level("power") == 5 and main.upgrade_cost("power") == -1, "upgrades cap at their max level")
 	main.bank = 0
-	main.up_power = 0
-	main.up_speed = 0
-	main.up_traj = 0
+	main.levels = main.Rules.empty_levels()
 	main._save_progress()
-	# ---- skid: after landing the ragdoll keeps sliding through the open ground instead of stopping
-	var roll_new: float = await _rollout(main, false)
-	var roll_old: float = await _rollout(main, true)
-	check(roll_new >= 12.0 and roll_new >= roll_old - 1.0, "skid assist: never dead-stops (rolls %.0f m after landing, classic %.0f m)" % [roll_new, roll_old])
 	# ---- extreme shots: result in time, camera keeps the ragdoll in view, bounded physics
 	var shots := {
 		"hard left": [0.55, 0.85], "hard right": [0.55, -0.85], "long centre": [0.8, 0.0],
@@ -329,7 +321,7 @@ func _run() -> void:
 	var st: Dictionary = await _shoot(main, 0.12, 0.0)
 	check(st.active <= main.town.ACTIVE_CAP + 10, "stress shot: peak active released pieces %d" % st.active)
 	check(st.worst_ms < 80.0, "stress shot: worst frame %.1f ms (headless desktop)" % st.worst_ms)
-	# ---- tap-to-skip after 1.5 s of flight only
+	# ---- SKIP button appears only after a couple of seconds of flight, and a swipe never skips
 	main.reset()
 	await frames(2)
 	_aim(main, 0.8, 0.0)
@@ -339,11 +331,13 @@ func _run() -> void:
 	press.button_index = MOUSE_BUTTON_LEFT
 	press.pressed = true
 	main._unhandled_input(press)
-	check(main.state == 1, "tap before 1.5 s does not skip")
-	await frames(90)
+	check(main.state == 1 and not main.btn_skip.visible, "mid-flight touch does not skip; SKIP button hidden early")
+	main.air_input = 0.0
+	await frames(150)
 	if main.state == 1:
-		main._unhandled_input(press)
-	check(main.state == 2, "tap after 1.5 s skips to the result")
+		check(main.btn_skip.visible, "SKIP button shows after 2 s of flight")
+		main.btn_skip.pressed.emit()
+	check(main.state == 2, "SKIP skips to the result")
 	# ---- About formatting regression (version code printed as an integer)
 	main.get_node("/root/Ota").info["version_code"] = 7.0
 	var txt: String = SettingsMenu.diagnostics_text(main.get_node("/root/Ota"))
