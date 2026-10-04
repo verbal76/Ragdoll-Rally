@@ -191,7 +191,7 @@ jobs:
       - name: Release notes + checksum (delivered builds only)
         if: steps.rel.outputs.deliver == 'true'
         run: |
-          python3 release/make_notes.py "${{ steps.export.outputs.apk }}" build/release_notes.md "$GITHUB_SHA" "${{ github.run_number }}" "Godot 4.7.1" 36
+          python3 release/make_notes.py "${{ steps.export.outputs.apk }}" build/release_notes.md "$GITHUB_SHA" "${{ github.run_number }}" "${{ github.run_number }}" "Godot 4.7.1" 36
           (cd build && sha256sum "${{ steps.export.outputs.name }}" > "${{ steps.export.outputs.name }}.sha256")
           cp build/apk_report.json "build/${{ steps.rel.outputs.stem }}-v${{ steps.rel.outputs.version }}-build-report.json"
           cat build/release_notes.md
