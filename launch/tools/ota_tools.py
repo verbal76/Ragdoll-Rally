@@ -41,7 +41,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("fingerprint")
     b = sub.add_parser("build-info")
-    for a in ["out", "version-name", "version-code", "sha", "run", "channel", "target-sdk", "min-sdk", "compile-sdk", "generation", "manifest-url", "signing", "build-type"]:
+    for a in ["out", "version-name", "version-code", "sha", "run", "channel", "target-sdk", "min-sdk", "compile-sdk", "generation", "manifest-url", "signing", "build-type", "product-name", "public-version", "build-kind"]:
         b.add_argument("--" + a, default="")
     m = sub.add_parser("manifest")
     for a in ["out", "pck", "id", "name", "sequence", "sha", "channel", "url", "min-version-code"]:
@@ -51,7 +51,8 @@ def main():
         print(fingerprint())
     elif a.cmd == "build-info":
         info = {
-            "app_name": "RR Launch", "package_id": "com.hotatticgames.ragdollrally.launch",
+            "app_name": "RR Launch", "product_name": a.product_name or "Ragdoll Rally Launch", "public_version": a.public_version or a.version_name,
+            "build_kind": a.build_kind or "internal", "package_id": "com.hotatticgames.ragdollrally.launch",
             "version_name": a.version_name, "version_code": int(a.version_code or 0), "source_sha": a.sha,
             "run_number": int(a.run or 0), "build_type": a.build_type or "debug", "channel": a.channel or "poc",
             "min_sdk": a.min_sdk or "unknown", "target_sdk": a.target_sdk or "unknown",

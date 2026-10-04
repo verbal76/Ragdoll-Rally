@@ -7,6 +7,7 @@ on:
     branches: [claude/launch-api36-modernization, claude/launch-expanded-playfield, claude/launch-mayhem-upgrades, claude/launch-gameplay-pivot]
     paths:
       - 'launch/**'
+      - 'release/**'
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
@@ -24,6 +25,35 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
+      # The PUBLIC version is supplied ONCE, in release/release.json. Everything below (release title,
+      # APK filename, About/diagnostics, release notes, Android versionName) is derived from it.
+      # A release is published only when release.json says "deliver": true AND v<version> has not been released.
+      - name: Read public version (release/release.json)
+        id: rel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(python3 -c "import json;print(json.load(open('release/release.json'))['version'])")
+          PRODUCT=$(python3 -c "import json;print(json.load(open('release/release.json'))['product'])")
+          STEM=$(python3 -c "import json;print(json.load(open('release/release.json'))['file_stem'])")
+          REQ=$(python3 -c "import json;print(str(json.load(open('release/release.json'))['deliver']).lower())")
+          EXISTS=false
+          if gh release view "v$V" >/dev/null 2>&1; then EXISTS=true; fi
+          DELIVER=false
+          if [ "$REQ" = "true" ] && [ "$EXISTS" = "false" ] && [ "${{ github.event_name }}" = "push" ]; then DELIVER=true; fi
+          if [ "$REQ" = "true" ] && [ "$EXISTS" = "true" ]; then echo "::warning::v$V is already released; bump release/release.json to publish a new build"; fi
+          SHA7=$(echo "$GITHUB_SHA" | cut -c1-7)
+          if [ "$DELIVER" = "true" ]; then
+            VNAME="v$V"; LABEL="v$V"; APK="$STEM-v$V.apk"; KIND=release
+          else
+            VNAME="v$V-internal"; LABEL="v$V (internal test build, not delivered)"; APK="$STEM-v$V-internal-$SHA7.apk"; KIND=internal
+          fi
+          {
+            echo "version=$V"; echo "product=$PRODUCT"; echo "stem=$STEM"; echo "deliver=$DELIVER"
+            echo "vname=$VNAME"; echo "label=$LABEL"; echo "apk=$APK"; echo "kind=$KIND"
+          } >> "$GITHUB_OUTPUT"
+          echo "public version v$V ($KIND) -> $APK"
 
       - uses: actions/setup-java@v4
         with:
@@ -85,7 +115,7 @@ jobs:
 
       - name: Set version
         run: |
-          sed -i "s/^version\/code=.*/version\/code=${{ github.run_number }}/; s/^version\/name=.*/version\/name=\"0.5.0\"/" launch/export_presets.cfg
+          sed -i "s/^version\/code=.*/version\/code=${{ github.run_number }}/; s/^version\/name=.*/version\/name=\"${{ steps.rel.outputs.vname }}\"/" launch/export_presets.cfg
           grep -E '^version/|gradle_build/' launch/export_presets.cfg
 
       - name: Write build identity (build_info.json)
@@ -97,7 +127,7 @@ jobs:
           echo "template targetSdk=$TARGET minSdk=$MIN compileSdk=$COMPILE"
           test "$TARGET" = "36"
           python3 launch/tools/ota_tools.py build-info --out launch/build_info.json \
-            --version-name 0.5.0 --version-code ${{ github.run_number }} --sha "$GITHUB_SHA" \
+            --version-name "${{ steps.rel.outputs.vname }}" --public-version "${{ steps.rel.outputs.label }}" --product-name "${{ steps.rel.outputs.product }}" --build-kind ${{ steps.rel.outputs.kind }} --version-code ${{ github.run_number }} --sha "$GITHUB_SHA" \
             --run ${{ github.run_number }} --channel poc-g2 --target-sdk "$TARGET" --min-sdk "$MIN" --compile-sdk "$COMPILE" \
             --generation "Godot 4.7.1, Gradle build, Android API 36" \
             --manifest-url "https://github.com/${{ github.repository }}/releases/download/launch-ota-channel-poc-g2/manifest.json" \
@@ -113,6 +143,9 @@ jobs:
       - name: Verify (OTA / About / applying-update state machine)
         run: godot --headless --path launch -s tests/verify_ota.gd
 
+      - name: Verify (Hot Attic Games studio splash - canonical asset, order, timing, fit, transparency, resume, failure)
+        run: godot --headless --path launch -s tests/verify_splash.gd
+
       - name: Verify (gameplay pivot - characters, upgrades, skipping, ricochet, limbs, fire, explosions, selector)
         run: godot --headless --path launch -s tests/verify_pivot.gd
 
@@ -127,8 +160,7 @@ jobs:
       - name: Export APK (Gradle)
         id: export
         run: |
-          SHA7=$(echo "$GITHUB_SHA" | cut -c1-7)
-          APK="RR-Launch-PIVOT-b${{ github.run_number }}-${SHA7}.apk"
+          APK="${{ steps.rel.outputs.apk }}"
           mkdir -p build
           godot --headless --path launch --export-debug "Android" "../build/$APK"
           ls -la build
@@ -139,7 +171,7 @@ jobs:
       - name: Verify APK artifact (identity, SDK, signing, native libs, 16 KB)
         run: |
           python3 launch/tools/verify_apk.py "${{ steps.export.outputs.apk }}" \
-            --package com.hotatticgames.ragdollrally.launch --version-name 0.5.0 \
+            --package com.hotatticgames.ragdollrally.launch --version-name "${{ steps.rel.outputs.vname }}" \
             --version-code ${{ github.run_number }} --min-sdk 24 --target-sdk 36 \
             --cert-sha256 "$SIGNING_CERT_SHA256" --json-out build/apk_report.json | tee build/apk_report.txt
           python3 - <<'PY'
@@ -156,18 +188,26 @@ jobs:
             ${{ steps.export.outputs.apk }}
             build/apk_report.json
 
-      - name: Publish prerelease
+      - name: Release notes + checksum (delivered builds only)
+        if: steps.rel.outputs.deliver == 'true'
+        run: |
+          python3 release/make_notes.py "${{ steps.export.outputs.apk }}" build/release_notes.md "$GITHUB_SHA" "${{ github.run_number }}" "Godot 4.7.1" 36
+          (cd build && sha256sum "${{ steps.export.outputs.name }}" > "${{ steps.export.outputs.name }}.sha256")
+          cp build/apk_report.json "build/${{ steps.rel.outputs.stem }}-v${{ steps.rel.outputs.version }}-build-report.json"
+          cat build/release_notes.md
+
+      # GitHub Release: title "<Product> v<N>", tag v<N>, marked LATEST (not a pre-release).
+      - name: Publish release (delivered builds only)
+        if: steps.rel.outputs.deliver == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: rr-launch-b${{ github.run_number }}
-          name: 'RR Launch (build ${{ github.run_number }}) - GAMEPLAY PIVOT TEST BUILD'
-          prerelease: true
+          tag_name: v${{ steps.rel.outputs.version }}
+          name: ${{ steps.rel.outputs.product }} v${{ steps.rel.outputs.version }}
+          prerelease: false
+          make_latest: true
           target_commitish: ${{ github.sha }}
-          body: |
-            RR Launch, build ${{ github.run_number }}: GAMEPLAY PIVOT TEST BUILD (fun-first rebuild).
-            Pick a ragdoll (18 characters) and a city, then throw. Flailing, flips, skipping, ricochets, limbs, blood (can be switched off in Settings), fire, TNT and stacking upgrades.
-            The previous builds are untouched (b9 = tag launch-g2x-b9). Debug-signed arm64 APK, same package as earlier RR Launch builds, installs over them.
-            Commit: ${{ github.sha }}
+          body_path: build/release_notes.md
           files: |
             ${{ steps.export.outputs.apk }}
-            build/apk_report.json
+            ${{ steps.export.outputs.apk }}.sha256
+            build/${{ steps.rel.outputs.stem }}-v${{ steps.rel.outputs.version }}-build-report.json
