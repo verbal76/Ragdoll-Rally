@@ -265,7 +265,7 @@ func _refresh() -> void:
 		for i in boxes.size():
 			(boxes[i] as ColorRect).color = Color(1.0, 0.78, 0.2) if i < v else Color(0.22, 0.25, 0.32)
 	var e: Dictionary = Rules.ENVIRONMENTS[env_idx]
-	_env_name.text = str(e["name"])
+	_env_name.text = str(e["name"]) + (("   [%s]" % str(e["tag"])) if str(e.get("tag", "")) != "" else "")
 	_env_desc.text = str(e["desc"])
 	var ok: bool = bool(e["playable"])
 	_env_state.text = "" if ok else "LOCKED - not built yet"

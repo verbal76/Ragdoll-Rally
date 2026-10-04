@@ -5,6 +5,7 @@ extends Node3D
 ## struck hard enough (cheap "destruction"). Props are ordinary rigid bodies.
 
 const Rules := preload("res://scripts/rules.gd")
+const Cities := preload("res://scripts/cities.gd")
 
 signal piece_released(piece: RigidBody3D)
 signal ignited(node: Node3D, pos: Vector3)
@@ -58,6 +59,12 @@ var _burnt_static: Array[Node3D] = []
 var glass: Array[StaticBody3D] = []
 var _broken_glass: Array[StaticBody3D] = []
 var env_id: String = "city"
+var ground_color: Color = Color(0.40, 0.66, 0.34)
+var road_color: Color = Color(0.62, 0.58, 0.5)
+var _mat_cache: Dictionary = {}
+var _glass_xfs: Array[Transform3D] = []
+var _glass_mm: MultiMeshInstance3D
+var boundary_bodies: Array[StaticBody3D] = []
 var smash_push: float = 0.45            # debris launch factor (0.8 in the mayhem tuning)
 
 func build(p_legacy: bool = false, p_env: String = "city") -> void:
@@ -66,10 +73,20 @@ func build(p_legacy: bool = false, p_env: String = "city") -> void:
 	smash_push = 0.45 if legacy else 0.8
 	_phys_stone.friction = 0.8 if legacy else 0.6
 	_phys_stone.bounce = 0.12 if legacy else 0.4
+	if not legacy:
+		var th: Dictionary = Rules.env_by_id(env_id)["theme"]
+		ground_color = th["ground"]
+		road_color = th.get("road", road_color)
 	_ground()
 	_launcher()
 	if env_id == "yard" and not legacy:
 		build_yard()
+		_perimeter()
+		return
+	if not legacy and Cities.IDS.has(env_id):
+		smash_push = 0.9
+		Cities.build(self, env_id)
+		_finish_glass()
 		_perimeter()
 		return
 	_house()
@@ -131,11 +148,11 @@ func _ground() -> void:
 	cs.shape = sh
 	g.add_child(cs)
 	g.position = Vector3(80, -1, 0) if legacy else Vector3(95, -1, 0)
-	var vis := _box_mesh(gsz, Color(0.40, 0.66, 0.34))
+	var vis := _box_mesh(gsz, ground_color)
 	g.add_child(vis)
 	add_child(g)
 	# cobble road strip so the town reads as a place
-	var road := _box_mesh(Vector3(70 if legacy else 230, 0.05, 6), Color(0.62, 0.58, 0.5))
+	var road := _box_mesh(Vector3(70 if legacy else 230, 0.05, 6), road_color)
 	road.position = Vector3(36 if legacy else 90, 0.02, 0)
 	add_child(road)
 
@@ -601,14 +618,20 @@ func _gate_and_keep() -> void:
 	_bonus(win, "keep_window", "Keep Window", 1200)
 
 func _perimeter() -> void:
-	# stone boundary walls (collider extends high so nothing can leave the field)
+	# The world edge. These colliders are NOT destructive surfaces: touching one ends the throw cleanly
+	# (meta "boundary"; see main.gd _hit_boundary). v12 treated them as masonry and fast throws "exploded" against nothing.
 	var col := Color(0.46, 0.46, 0.5)
-	_static_box(Vector3(WORLD_X_MAX, 200.0, 0.0), Vector3(2.0, 400.0, WORLD_Z * 2.0 + 4.0), col, false)
-	_static_box(Vector3(WORLD_X_MAX, 2.0, 0.0), Vector3(2.0, 4.0, WORLD_Z * 2.0 + 4.0), col)
-	_static_box(Vector3(WORLD_X_MIN, 200.0, 0.0), Vector3(2.0, 400.0, WORLD_Z * 2.0 + 4.0), col, false)
+	var walls: Array[StaticBody3D] = []
+	walls.append(_static_box(Vector3(WORLD_X_MAX, 200.0, 0.0), Vector3(2.0, 400.0, WORLD_Z * 2.0 + 4.0), col, false))
+	walls.append(_static_box(Vector3(WORLD_X_MAX, 2.0, 0.0), Vector3(2.0, 4.0, WORLD_Z * 2.0 + 4.0), col))
+	walls.append(_static_box(Vector3(WORLD_X_MIN, 200.0, 0.0), Vector3(2.0, 400.0, WORLD_Z * 2.0 + 4.0), col, false))
 	for sgn in [-1.0, 1.0]:
-		_static_box(Vector3((WORLD_X_MAX + WORLD_X_MIN) * 0.5, 200.0, sgn * WORLD_Z), Vector3(WORLD_X_MAX - WORLD_X_MIN, 400.0, 2.0), col, false)
-		_static_box(Vector3((WORLD_X_MAX + WORLD_X_MIN) * 0.5, 2.0, sgn * WORLD_Z), Vector3(WORLD_X_MAX - WORLD_X_MIN, 4.0, 2.0), col)
+		walls.append(_static_box(Vector3((WORLD_X_MAX + WORLD_X_MIN) * 0.5, 200.0, sgn * WORLD_Z), Vector3(WORLD_X_MAX - WORLD_X_MIN, 400.0, 2.0), col, false))
+		walls.append(_static_box(Vector3((WORLD_X_MAX + WORLD_X_MIN) * 0.5, 2.0, sgn * WORLD_Z), Vector3(WORLD_X_MAX - WORLD_X_MIN, 4.0, 2.0), col))
+	for w in walls:
+		w.set_meta("boundary", true)
+		w.set_meta("mat", "ground")
+		boundary_bodies.append(w)
 
 func _tree(s: Vector3) -> void:
 	var t := StaticBody3D.new()
@@ -1069,7 +1092,8 @@ func detonate(b: RigidBody3D) -> Dictionary:
 	b.visible = false
 	b.collision_layer = 0
 	b.freeze = true
-	return explode(b.global_position, 9.0, 22.0)
+	var br: float = float(b.get_meta("blast_r", 9.0))
+	return explode(b.global_position, br, 22.0 * br / 9.0)
 
 
 # ================================================================== fire engine
@@ -1209,14 +1233,22 @@ func break_glass(b: StaticBody3D) -> bool:
 	if b.collision_layer == 0:
 		return false
 	b.collision_layer = 0
-	b.visible = false
+	if b.has_meta("gi") and _glass_mm != null:
+		var gi: int = int(b.get_meta("gi"))
+		_glass_mm.multimesh.set_instance_transform(gi, Transform3D(Basis.from_scale(Vector3.ZERO), (_glass_xfs[gi] as Transform3D).origin))
+	else:
+		b.visible = false
 	_broken_glass.append(b)
 	return true
 
 func _restore_glass() -> void:
 	for b in _broken_glass:
 		b.collision_layer = 1
-		b.visible = true
+		if b.has_meta("gi") and _glass_mm != null:
+			var gi: int = int(b.get_meta("gi"))
+			_glass_mm.multimesh.set_instance_transform(gi, _glass_xfs[gi])
+		else:
+			b.visible = true
 	_broken_glass.clear()
 
 # ================================================================== RAGDOLL TEST YARD
@@ -1313,3 +1345,203 @@ func _scatter_scenery_yard() -> void:
 
 func _pieces_in(group: String) -> Array:
 	return groups.get(group, [])
+
+
+# ================================================================== CITY KIT (used by cities.gd)
+## Deterministic hash for layout variation (no randomness: a city always loads identically).
+static func hsh(i: int, j: int) -> int:
+	return int(((i * 73856093) ^ (j * 19349663) ^ 83492791) & 0x7fffffff) % 1000
+
+func _cmat(c: Color) -> StandardMaterial3D:
+	var key: int = c.to_rgba32()
+	if not _mat_cache.has(key):
+		_mat_cache[key] = _mat(c)
+	return _mat_cache[key]
+
+func _box_mesh_shared(size: Vector3, c: Color) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = size
+	bm.material = _cmat(c)
+	mi.mesh = bm
+	return mi
+
+## A breakable frozen block (container, panel, scaffold plank...). Behaves like the kit pieces: released by hard hits.
+func _block(pos: Vector3, size: Vector3, color: Color, mat_name: String, mass: float = 3.0, tough: float = 8.0, group: String = "blocks", group_all: bool = false) -> RigidBody3D:
+	var b := RigidBody3D.new()
+	b.name = "block_%d" % pieces.size()
+	b.position = pos
+	b.mass = mass
+	b.collision_layer = 4
+	b.collision_mask = 1 | 2 | 4
+	b.physics_material_override = _phys_stone
+	b.can_sleep = true
+	b.continuous_cd = true
+	var cs := CollisionShape3D.new()
+	var sh := BoxShape3D.new()
+	sh.size = size * 0.98
+	cs.shape = sh
+	b.add_child(cs)
+	b.add_child(_box_mesh_shared(size, color))
+	b.set_meta("rest", b.position)
+	b.set_meta("kind", "wall")
+	b.set_meta("group", group)
+	b.set_meta("tough", tough)
+	b.set_meta("frozen_piece", true)
+	b.set_meta("mat", mat_name)
+	if group_all:
+		b.set_meta("group_all", true)
+	b.freeze_mode = RigidBody3D.FREEZE_MODE_STATIC
+	b.freeze = true
+	add_child(b)
+	pieces.append(b)
+	if not groups.has(group):
+		groups[group] = []
+	(groups[group] as Array).append(b)
+	if bool(Rules.MATERIALS[mat_name]["fire"]):
+		register_combustible(b)
+	return b
+
+## A free rigid box prop (car, dumpster, tank, lounger...). `blast_r` > 0 makes it explosive with that radius.
+func _prop_box(pos: Vector3, size: Vector3, color: Color, mat_name: String, mass: float = 4.0, blast_r: float = 0.0) -> RigidBody3D:
+	var b := RigidBody3D.new()
+	b.position = pos + Vector3(0, size.y * 0.5, 0)
+	b.mass = mass
+	b.collision_layer = 4
+	b.collision_mask = 1 | 2 | 4
+	var pm := PhysicsMaterial.new()
+	pm.friction = 0.6
+	pm.bounce = 0.4
+	b.physics_material_override = pm
+	b.can_sleep = true
+	var cs := CollisionShape3D.new()
+	var sh := BoxShape3D.new()
+	sh.size = size * 0.98
+	cs.shape = sh
+	b.add_child(cs)
+	b.add_child(_box_mesh_shared(size, color))
+	b.set_meta("prop", true)
+	b.set_meta("rest", b.position)
+	b.set_meta("mat", mat_name)
+	if blast_r > 0.0:
+		b.set_meta("explosive", true)
+		b.set_meta("blast_r", blast_r)
+		tnt.append(b)
+	add_child(b)
+	b.sleeping = true
+	props.append(b)
+	if bool(Rules.MATERIALS[mat_name]["fire"]) or blast_r > 0.0:
+		register_combustible(b)
+	return b
+
+## A wall of glass panes (cheap): one static collider per pane, ONE MultiMesh for every pane's visual.
+## `along` = unit horizontal direction the wall runs, `normal` = unit horizontal direction it faces,
+## `origin` = bottom centre of the wall. Panes shatter individually (break_glass).
+func _glass_wall(origin: Vector3, along: Vector3, normal: Vector3, width: float, height: float, pane_w: float, pane_h: float) -> Array[StaticBody3D]:
+	var out: Array[StaticBody3D] = []
+	var cols: int = maxi(int(width / pane_w), 1)
+	var rows: int = maxi(int(height / pane_h), 1)
+	var basis := Basis(along.normalized(), Vector3.UP, normal.normalized())
+	for r in rows:
+		for c in cols:
+			var pos: Vector3 = origin + along.normalized() * ((float(c) + 0.5 - float(cols) * 0.5) * pane_w) + Vector3.UP * ((float(r) + 0.5) * pane_h)
+			var b := StaticBody3D.new()
+			b.collision_layer = 1
+			b.collision_mask = 0
+			b.transform = Transform3D(basis, pos)
+			var cs := CollisionShape3D.new()
+			var sh := BoxShape3D.new()
+			sh.size = Vector3(pane_w * 0.96, pane_h * 0.96, 0.3)
+			cs.shape = sh
+			b.add_child(cs)
+			b.set_meta("mat", "glass")
+			b.set_meta("glass", true)
+			b.set_meta("half", sh.size * 0.5)
+			b.set_meta("gi", _glass_xfs.size())
+			_glass_xfs.append(Transform3D(basis.scaled(Vector3(pane_w * 0.96, pane_h * 0.96, 0.14)), pos))
+			add_child(b)
+			glass.append(b)
+			out.append(b)
+	return out
+
+func _finish_glass() -> void:
+	if _glass_xfs.is_empty():
+		return
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	var bm := BoxMesh.new()
+	bm.size = Vector3.ONE
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.55, 0.85, 1.0, 0.42)
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.roughness = 0.2
+	m.metallic = 0.4
+	bm.material = m
+	mm.mesh = bm
+	mm.instance_count = _glass_xfs.size()
+	for i in _glass_xfs.size():
+		mm.set_instance_transform(i, _glass_xfs[i])
+	_glass_mm = MultiMeshInstance3D.new()
+	_glass_mm.multimesh = mm
+	_glass_mm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_glass_mm)
+
+## Standing palm (static, burns).
+func _palm(pos: Vector3) -> void:
+	var b := StaticBody3D.new()
+	b.collision_layer = 1
+	b.collision_mask = 0
+	b.position = pos + Vector3(0, 3.0, 0)
+	var cs := CollisionShape3D.new()
+	var sh := BoxShape3D.new()
+	sh.size = Vector3(0.7, 6.0, 0.7)
+	cs.shape = sh
+	b.add_child(cs)
+	b.add_child(_box_mesh_shared(Vector3(0.6, 6.0, 0.6), Color(0.45, 0.32, 0.2)))
+	var crown := _box_mesh_shared(Vector3(3.6, 0.5, 3.6), Color(0.2, 0.62, 0.28))
+	crown.position = Vector3(0, 3.2, 0)
+	b.add_child(crown)
+	var crown2 := _box_mesh_shared(Vector3(0.5, 0.5, 5.2), Color(0.18, 0.55, 0.25))
+	crown2.position = Vector3(0, 3.5, 0)
+	b.add_child(crown2)
+	b.set_meta("mat", "wood")
+	b.set_meta("half", sh.size * 0.5)
+	add_child(b)
+	register_combustible(b)
+
+## Cylinder tank (static, metal). Radial normals come from the cylinder fallback in main._surface_normal.
+func _tank(pos: Vector3, r: float, h: float, color: Color) -> StaticBody3D:
+	var b := StaticBody3D.new()
+	b.collision_layer = 1
+	b.collision_mask = 0
+	b.position = pos + Vector3(0, h * 0.5, 0)
+	var cs := CollisionShape3D.new()
+	var sh := CylinderShape3D.new()
+	sh.radius = r
+	sh.height = h
+	cs.shape = sh
+	b.add_child(cs)
+	var mi := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = r
+	cm.bottom_radius = r
+	cm.height = h
+	cm.radial_segments = 14
+	cm.material = _cmat(color)
+	mi.mesh = cm
+	b.add_child(mi)
+	b.set_meta("mat", "metal")
+	add_child(b)
+	return b
+
+## Sign text that faces the launcher (-X).
+func _sign_label(text: String, pos: Vector3, color: Color = Color(1, 1, 1), px: float = 0.05, facing: float = -90.0) -> void:
+	var l := Label3D.new()
+	l.text = text
+	l.font_size = 72
+	l.pixel_size = px
+	l.modulate = color
+	l.outline_size = 10
+	l.rotation_degrees = Vector3(0, facing, 0)
+	l.position = pos
+	add_child(l)

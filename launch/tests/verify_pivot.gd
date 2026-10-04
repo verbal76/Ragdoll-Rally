@@ -190,7 +190,7 @@ func _rules() -> void:
 	Sc.award("b", "B", 100, "Ricochets")
 	Sc.clock = 9.0
 	Sc.award("c", "C", 100, "Skips")
-	check(Sc.lines["Ricochets"] == 108 and Sc.best_combo == 2 and Sc.combo == 1 and Sc.lines["Skips"] == 200, "combo chains inside the window (x1.08) and resets after it")
+	check(Sc.lines["Ricochets"] == 106 and Sc.best_combo == 2 and Sc.combo == 1 and Sc.lines["Skips"] == 200, "combo chains inside the window (x1.06) and resets after it")
 	var Sd := Scoring.new()
 	Sd.award("k", "K", 50, "Skips")
 	Sd.award("k", "K", 50, "Skips")
@@ -205,7 +205,7 @@ func _rules() -> void:
 	for en in Rules.ENVIRONMENTS:
 		if bool(en["playable"]):
 			playable += 1
-	check(bool(Rules.ENVIRONMENTS[0]["playable"]) and str(Rules.ENVIRONMENTS[0]["id"]) == "yard" and playable == 2, "Test Yard is the first playable environment (2 playable: yard + b9 city)")
+	check(playable == Rules.ENVIRONMENTS.size() and str(Rules.ENVIRONMENTS[Rules.env_index("yard")]["tag"]) == "TRAINING", "all 7 environments are playable; Test Yard is marked TRAINING")
 	# --- fire propagation limits
 	var pos: Array = []
 	var st := PackedInt32Array()
@@ -249,7 +249,7 @@ func _aim(b: float, s: float) -> void:
 	main._update_aim()
 
 func _throw(char_i: int, b: float, s: float, max_frames: int = 60 * 14) -> Dictionary:
-	main.start_game(char_i, 0)
+	main.start_game(char_i, Rules.env_index("yard"))
 	await frames(3)
 	_aim(b, s)
 	main.fire()
@@ -297,14 +297,12 @@ func _scenes() -> void:
 	ui._step_char(1)
 	check(ui.char_idx == 0, "selector: ...and the next step is RAGNAR")
 	ui._show_page(1)
-	ui.env_idx = 0
+	ui.env_idx = Rules.env_index("yard")
 	ui._refresh()
 	ui._on_go()
-	check(got.size() == 1 and got[0] == [0, 0] and not ui._go.disabled, "selector: LAUNCH on the Test Yard starts the game")
-	ui._step_env(2)
-	check(ui._go.disabled and str(Rules.ENVIRONMENTS[ui.env_idx]["id"]) == "downtown", "selector: a not-yet-built city is shown but locked")
-	ui._on_go()
-	check(got.size() == 1, "selector: LAUNCH does nothing on a locked city")
+	check(got.size() == 1 and got[0] == [0, Rules.env_index("yard")] and not ui._go.disabled, "selector: LAUNCH on the Test Yard starts the game")
+	ui._step_env(1)
+	check(not ui._go.disabled and str(Rules.ENVIRONMENTS[ui.env_idx]["id"]) == "downtown", "selector: Downtown is playable (nothing is locked)")
 	var sw := InputEventMouseButton.new()
 	sw.button_index = MOUSE_BUTTON_LEFT
 	sw.pressed = true
@@ -319,7 +317,7 @@ func _scenes() -> void:
 	check(ui.env_idx == (env_before + 1) % Rules.ENVIRONMENTS.size(), "selector: swiping left advances the selection")
 	ui.queue_free()
 	# ---------- game flow + yard contents
-	main.start_game(1, 0)
+	main.start_game(1, Rules.env_index("yard"))
 	await frames(4)
 	check(main.state == 0 and main.town.env_id == "yard" and main.char_idx == 1, "start_game(BIG RED, Test Yard) enters AIM in the yard")
 	var T = main.town
@@ -339,13 +337,13 @@ func _scenes() -> void:
 	check(mats.has("wood") and mats.has("masonry") and mats.has("roof"), "yard pieces carry wood / masonry / roof material (not one generic cube type)")
 	check(main.ragdoll.torso.mass > Rules.effective(Rules.CHARACTERS[6]["stats"], Rules.empty_levels())["extra_mass"] + 5.0 and main.ragdoll.bodies.size() == 6 and main.ragdoll.joint_count == 5, "character profile applied to the ragdoll (heavier BIG RED torso, 6 bodies / 5 joints)")
 	var m_red: float = main.ragdoll.torso.mass
-	main.start_game(15, 0)
+	main.start_game(15, Rules.env_index("yard"))
 	await frames(3)
 	check(main.ragdoll.torso.mass < m_red, "different characters have different physics (GARY lighter than BIG RED)")
 	# ---------- upgrades change the physics + stack
 	main.bank = 100000
 	main.levels = Rules.empty_levels()
-	main.start_game(0, 0)
+	main.start_game(0, Rules.env_index("yard"))
 	await frames(3)
 	main.aim_power = 1.0
 	var s0: float = main.launch_speed()
@@ -354,7 +352,7 @@ func _scenes() -> void:
 	main.buy("bounce")
 	main.buy("explosive")
 	main.buy("ignition")
-	main.start_game(0, 0)
+	main.start_game(0, Rules.env_index("yard"))
 	await frames(3)
 	main.aim_power = 1.0
 	check(main.launch_speed() > s0 * 1.08 and float(main.fxp["restitution"]) > 0.49 and float(main.fxp["explode_chance"]) > 0.09 and int(main.fxp["ignition"]) == 1,
@@ -379,7 +377,7 @@ func _scenes() -> void:
 	var hard: Dictionary = await _throw(6, 1.2, 0.3)
 	check(hard.sane and hard.state == 2, "overdrive glass-cannon throw stays finite and finishes (t=%.1f s, limbs lost %d)" % [hard.t, hard.limbs])
 	# ---------- air control: swipe adds rotation
-	main.start_game(0, 0)
+	main.start_game(0, Rules.env_index("yard"))
 	await frames(3)
 	_aim(0.6, 0.0)
 	main.fire()
@@ -392,7 +390,7 @@ func _scenes() -> void:
 	check(not w0.is_equal_approx(w1) and w1.length() <= main.ragdoll.MAX_OMEGA + 0.5, "airborne swipe changes the rotation (bounded)")
 	main._finish()
 	# ---------- dismemberment: a limb comes off, keeps flying, stays a physics body
-	main.start_game(6, 0)
+	main.start_game(6, Rules.env_index("yard"))
 	await frames(3)
 	_aim(0.6, 0.0)
 	main.fire()
@@ -479,7 +477,7 @@ func _scenes() -> void:
 	main.set_gore(true)
 	check(main.gore and main.fx.gore, "gore can be switched back on")
 	# ---------- impact feedback per tier runs without error and moves the camera
-	main.start_game(0, 0)
+	main.start_game(0, Rules.env_index("yard"))
 	await frames(3)
 	main.state = main.State.FLIGHT
 	var tr0: float = 0.0

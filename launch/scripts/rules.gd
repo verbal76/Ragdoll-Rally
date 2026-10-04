@@ -53,24 +53,40 @@ static func stat_pips(v: int) -> String:
 	return "#".repeat(clampi(v, 0, MAX_STAT)) + ".".repeat(MAX_STAT - clampi(v, 0, MAX_STAT))
 
 # ----------------------------------------------------------------- environments
-# Only `playable` ones can be launched into. The rest are authored-city slots that show up in the
-# selector as COMING SOON so the architecture (id -> builder) is in place.
+# `playable` cities are validated by tests/verify_cities.gd before they are enabled. `tag` is shown next to the name
+# ("TRAINING" for the Test Yard). `theme` tints the sky/ground so every city looks like its own place.
 const ENVIRONMENTS: Array[Dictionary] = [
-	{"id": "yard", "name": "RAGDOLL TEST YARD", "playable": true,
-		"desc": "Compact chaos lab: skip pads, glass, timber, masonry, a trampoline, TNT and kindling."},
-	{"id": "city", "name": "THE BIG CITY", "playable": true,
-		"desc": "The old b9 map: huge, dense, mostly wooden. Fire spreads."},
-	{"id": "downtown", "name": "DOWNTOWN", "playable": false,
-		"desc": "Skyscrapers, glass, rooftops, huge drops. Vertical ricochets. COMING SOON."},
-	{"id": "oldtown", "name": "OLD TOWN", "playable": false,
-		"desc": "Timber, market stalls, bell tower. FIRE. COMING SOON."},
-	{"id": "suburbia", "name": "SUBURBIA", "playable": false,
-		"desc": "Yards, pools, trampolines, cars. Skip city. COMING SOON."},
-	{"id": "industrial", "name": "INDUSTRIAL DISTRICT", "playable": false,
-		"desc": "Tanks, cranes, containers, explosives. COMING SOON."},
-	{"id": "resort", "name": "RESORT STRIP", "playable": false,
-		"desc": "Hotels, slides, curved glass. Weird rebounds. COMING SOON."},
+	{"id": "downtown", "name": "DOWNTOWN", "playable": true, "tag": "",
+		"desc": "Skyscraper canyons. Glass fronts, rooftop tanks, billboards, long drops. Think vertical.",
+		"theme": {"sky_top": Color(0.20, 0.33, 0.62), "sky_hz": Color(0.72, 0.78, 0.9), "ground": Color(0.30, 0.31, 0.34), "road": Color(0.14, 0.14, 0.16)}},
+	{"id": "oldtown", "name": "OLD TOWN", "playable": true, "tag": "",
+		"desc": "Tight timber alleys, market stalls, a bell tower. It all burns. Chain destruction.",
+		"theme": {"sky_top": Color(0.42, 0.50, 0.72), "sky_hz": Color(0.95, 0.82, 0.62), "ground": Color(0.50, 0.44, 0.34), "road": Color(0.50, 0.45, 0.38)}},
+	{"id": "suburbia", "name": "SUBURBIA", "playable": true, "tag": "",
+		"desc": "Low roofs, fences, pools and trampolines. Long horizontal skips across the lawns.",
+		"theme": {"sky_top": Color(0.30, 0.60, 0.95), "sky_hz": Color(0.82, 0.92, 1.0), "ground": Color(0.38, 0.72, 0.34), "road": Color(0.20, 0.20, 0.22)}},
+	{"id": "industrial", "name": "INDUSTRIAL DISTRICT", "playable": true, "tag": "",
+		"desc": "Warehouses, containers, tanks and cranes. Explosive chains and heavy destruction.",
+		"theme": {"sky_top": Color(0.40, 0.42, 0.48), "sky_hz": Color(0.86, 0.70, 0.52), "ground": Color(0.36, 0.34, 0.32), "road": Color(0.26, 0.25, 0.25)}},
+	{"id": "resort", "name": "RESORT STRIP", "playable": true, "tag": "",
+		"desc": "Pastel hotels, pools, a waterslide, palms and neon. Weird rebounds, big spectacle.",
+		"theme": {"sky_top": Color(0.95, 0.52, 0.55), "sky_hz": Color(1.0, 0.86, 0.60), "ground": Color(0.90, 0.82, 0.62), "road": Color(0.88, 0.80, 0.72)}},
+	{"id": "city", "name": "GRAND FORTRESS", "playable": true, "tag": "",
+		"desc": "The sprawling castle country: curtain walls, keep, harbor and mills. Huge, long throws.",
+		"theme": {"sky_top": Color(0.30, 0.55, 0.92), "sky_hz": Color(0.78, 0.88, 0.97), "ground": Color(0.40, 0.66, 0.34)}},
+	{"id": "yard", "name": "RAGDOLL TEST YARD", "playable": true, "tag": "TRAINING",
+		"desc": "Training ground: skip pads, glass, timber, masonry, trampoline, TNT. For testing mechanics.",
+		"theme": {"sky_top": Color(0.30, 0.55, 0.92), "sky_hz": Color(0.78, 0.88, 0.97), "ground": Color(0.40, 0.66, 0.34)}},
 ]
+
+static func env_index(id: String) -> int:
+	for i in ENVIRONMENTS.size():
+		if str(ENVIRONMENTS[i]["id"]) == id:
+			return i
+	return 0
+
+static func env_by_id(id: String) -> Dictionary:
+	return ENVIRONMENTS[env_index(id)]
 
 # ----------------------------------------------------------------- upgrades
 const UPGRADES: Dictionary = {
@@ -107,6 +123,8 @@ const MATERIALS: Dictionary = {
 	"metal": {"bounce": 1.15, "friction": 0.5, "breaks": false, "fire": false, "sound": "metal"},
 	"roof": {"bounce": 0.85, "friction": 0.6, "breaks": true, "fire": true, "sound": "wood"},
 	"trampoline": {"bounce": 2.6, "friction": 0.8, "breaks": false, "fire": false, "sound": "boing"},
+	"water": {"bounce": 1.1, "friction": 0.15, "breaks": false, "fire": false, "sound": "splash"},
+	"canvas": {"bounce": 1.5, "friction": 0.5, "breaks": false, "fire": true, "sound": "boing"},
 }
 
 ## Material from a kit model name (Kenney Retro Fantasy Kit naming).
@@ -153,7 +171,101 @@ static func effective(stats: Dictionary, lv: Dictionary) -> Dictionary:
 		"ignite_speed": 14.0 if li <= 1 else 9.0,
 		"fire_spread": 1.0 + 0.25 * float(li),
 		"assist": 0.25 + 0.05 * b + 0.04 * lb,        # extra skip retention on grazing hits (fades with energy)
+		"range_cap": RANGE_CAP_BASE + RANGE_CAP_PER_LEVEL * lp,   # launch governor (see governed_speed)
+		"apex_cap": APEX_CAP_BASE + APEX_CAP_PER_LEVEL * lp,
 	}
+
+# ----------------------------------------------------------------- launch trajectory governor
+# v12 finding: a hard pull gave 46 deg at up to 72-95 m/s, i.e. a 300-500 m range and a 80-135 m apex: straight over the
+# whole city and into the world wall. v13: (1) the upward angle is SOFT-limited, (2) the ideal ballistic range and apex are
+# SOFT-capped so no gesture can leave the playfield. Normal throws are untouched; only extremes are compressed.
+const RAGDOLL_GRAVITY_SCALE := 1.8
+const BASE_GRAVITY := 9.8
+const SOFT_PITCH_START_DEG := 28.0        # at or below this the gesture's pitch passes through unchanged
+const MAX_PITCH_DEG := 40.0               # absolute ceiling for any gesture (approached asymptotically, never reached)
+const MIN_PITCH_DEG := 3.0
+const RANGE_CAP_BASE := 150.0             # ideal (drag-free) ballistic range ceiling, metres...
+const RANGE_CAP_PER_LEVEL := 6.0          # ...+6 m per Launch Power level (max 180 m, wall is at 215 m)
+const APEX_CAP_BASE := 55.0               # ideal apex ceiling, metres (tallest Downtown tower ~58 m)
+const APEX_CAP_PER_LEVEL := 1.0
+const SOFT_KNEE := 0.78                   # caps start compressing at this fraction of the ceiling
+
+static func g_eff() -> float:
+	return BASE_GRAVITY * RAGDOLL_GRAVITY_SCALE
+
+## Smooth saturating cap: identity up to knee*cap, then eases asymptotically toward `cap` (never exceeds it).
+static func soft_cap(x: float, cap: float, knee: float = SOFT_KNEE) -> float:
+	var k: float = cap * knee
+	if x <= k:
+		return x
+	var span: float = cap - k
+	return k + span * (1.0 - exp(-(x - k) / span))
+
+## Gesture pitch (degrees) -> launch pitch. Identity below SOFT_PITCH_START_DEG, then compressed toward MAX_PITCH_DEG.
+static func soft_pitch_deg(raw_deg: float) -> float:
+	var r: float = maxf(raw_deg, MIN_PITCH_DEG)
+	if r <= SOFT_PITCH_START_DEG:
+		return r
+	return soft_cap(r, MAX_PITCH_DEG, SOFT_PITCH_START_DEG / MAX_PITCH_DEG)
+
+static func ideal_range(speed: float, pitch_rad: float) -> float:
+	return speed * speed * sin(2.0 * pitch_rad) / g_eff()
+
+static func ideal_apex(speed: float, pitch_rad: float) -> float:
+	var vy: float = speed * sin(pitch_rad)
+	return vy * vy / (2.0 * g_eff())
+
+## Launch speed after the range/apex governor (never raises speed).
+static func governed_speed(speed: float, pitch_rad: float, fx: Dictionary = {}) -> float:
+	var rc: float = float(fx.get("range_cap", RANGE_CAP_BASE))
+	var ac: float = float(fx.get("apex_cap", APEX_CAP_BASE))
+	var f: float = 1.0
+	var r: float = ideal_range(speed, pitch_rad)
+	if r > 0.001:
+		f = minf(f, sqrt(soft_cap(r, rc) / r))
+	var a: float = ideal_apex(speed, pitch_rad)
+	if a > 0.001:
+		f = minf(f, sqrt(soft_cap(a, ac) / a))
+	return speed * f
+
+## The launch direction for a gesture: raw pitch from the elevation component, then soft-limited.
+## heading = unit horizontal direction; up = tan-like elevation component the gesture produced.
+static func launch_dir(heading: Vector3, up: float) -> Vector3:
+	var h := Vector3(heading.x, 0.0, heading.z)
+	h = h.normalized() if h.length() > 0.0001 else Vector3.RIGHT
+	var raw_deg: float = rad_to_deg(atan(maxf(up, 0.0)))
+	var pitch: float = deg_to_rad(soft_pitch_deg(raw_deg))
+	return (h * cos(pitch) + Vector3.UP * sin(pitch)).normalized()
+
+# ----------------------------------------------------------------- economy: SCORE vs BANKED CREDITS
+# Score can be huge and exciting. Permanent upgrade currency is a separate, weighted, diminishing conversion of it,
+# so a spectacular skip chain feels great but cannot hand over the whole upgrade tree.
+const CREDIT_WEIGHTS := {"Distance": 0.5, "Airtime": 0.5, "Flips": 0.5, "Smashed": 0.5, "Glass": 0.5, "Skips": 0.4, "Ricochets": 0.45,
+	"Style": 0.4, "Carnage": 0.55, "Explosions": 0.5, "Fire": 0.5, "Targets": 0.75, "Impacts": 0.5}
+const CREDIT_DEFAULT_WEIGHT := 0.5
+const CREDIT_SCALE := 1.7                # tuned so a GOOD run (~2300 score) banks ~1900 -> full upgrade tree in ~25 good runs
+const CREDIT_KNEE := 2000.0               # credits above this per run count at CREDIT_SLOPE_ABOVE
+const CREDIT_SLOPE_ABOVE := 0.6
+const CREDIT_RUN_CAP := 3600              # nothing can bank more than this in one run
+
+static func bank_credit(lines: Dictionary) -> int:
+	var raw: float = 0.0
+	for k in lines.keys():
+		raw += float(lines[k]) * float(CREDIT_WEIGHTS.get(k, CREDIT_DEFAULT_WEIGHT)) * CREDIT_SCALE
+	if raw > CREDIT_KNEE:
+		raw = CREDIT_KNEE + (raw - CREDIT_KNEE) * CREDIT_SLOPE_ABOVE
+	return int(minf(raw, float(CREDIT_RUN_CAP)))
+
+static func total_upgrade_cost() -> int:
+	var t: int = 0
+	for k in UPGRADE_ORDER:
+		for c in (UPGRADES[k]["costs"] as Array):
+			t += int(c)
+	return t
+
+## Points for the n-th skip of a run: gentle growth, capped (v12 paid 40*n and compounded with the combo).
+static func skip_points(n: int) -> int:
+	return 45 + 8 * mini(maxi(n - 1, 0), 5)
 
 # ----------------------------------------------------------------- impacts
 ## Box surface normal from the contact point in the box's local space (everything in the yards is boxes).
@@ -294,8 +406,10 @@ static func is_calm(max_speed: float, energy: float) -> bool:
 
 # ----------------------------------------------------------------- scoring helpers
 ## Combo multiplier: each scoring event within the window extends the combo.
+const COMBO_MAX_LINKS := 14               # x1.84 at most (v12: x2.9)
+
 static func combo_mult(combo: int) -> float:
-	return 1.0 + 0.08 * float(clampi(combo - 1, 0, 24))
+	return 1.0 + 0.06 * float(clampi(combo - 1, 0, COMBO_MAX_LINKS))
 
 # ----------------------------------------------------------------- fire (data model)
 const FIRE_CAP := 26             # max simultaneously burning things (performance bound)

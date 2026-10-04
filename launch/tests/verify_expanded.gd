@@ -84,7 +84,7 @@ func _rollout(main: Node, cls: bool) -> float:
 func _run() -> void:
 	var main: Node = (load("res://scenes/main.tscn") as PackedScene).instantiate()
 	main.skip_select = true
-	main.env_idx = 1                 # the b9 city map (these tests are about it)
+	main.env_idx = main.Rules.env_index("city")   # the big city map (these tests are about it)
 	root.add_child(main)
 	await frames(5)
 	# ---- power: classic G1/G2 curve preserved for the regression baseline; v0.4 tuning is faster

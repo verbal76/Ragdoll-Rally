@@ -83,6 +83,14 @@ var _trails: Array = []                # [limb body, seconds left] blood trails 
 var _trail_acc: float = 0.0
 var _burn_acc: float = 0.0
 var _popups: int = 0
+var _sky_mat: ProceduralSkyMaterial
+var dev_tools: bool = false          # developer-only economy tools (never on in a normal build; see _ready)
+var last_credit: int = 0
+var _oob_at: float = -1.0
+var _last_skip_t: float = -9.0
+var _air_since_skip: bool = true
+var economy_reset_note: bool = false
+const ECONOMY_SCHEMA := 2
 var _pop_slot: int = 0
 var _wound_down: bool = false
 var cam_event: float = 0.0             # briefly widens the camera after big events
@@ -132,6 +140,8 @@ var _cam_look := Vector3.ZERO
 func _ready() -> void:
 	randomize()
 	Engine.max_fps = 60
+	# developer tools exist only when explicitly requested on the command line / environment; players never see them
+	dev_tools = OS.get_cmdline_user_args().has("--dev-economy") or OS.get_environment("RR_DEV_ECONOMY") == "1"
 	levels = Rules.empty_levels()
 	_load_best()
 	_setup_environment()
@@ -196,6 +206,7 @@ func _setup_environment() -> void:
 	env.background_mode = Environment.BG_SKY
 	var sky := Sky.new()
 	var sm := ProceduralSkyMaterial.new()
+	_sky_mat = sm
 	sm.sky_top_color = Color(0.30, 0.55, 0.92)
 	sm.sky_horizon_color = Color(0.78, 0.88, 0.97)
 	sm.ground_horizon_color = Color(0.78, 0.88, 0.97)
@@ -481,17 +492,14 @@ func _build_upgrade_panel() -> void:
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 16)
-	var test := Button.new()
-	test.text = "+10,000 (TEST)"
-	test.focus_mode = Control.FOCUS_NONE
-	test.custom_minimum_size = Vector2(300, 70)
-	test.add_theme_font_size_override("font_size", 28)
-	test.pressed.connect(func():
-		bank += 10000
-		_save_progress()
-		_update_hud()
-		_refresh_upgrades())
-	row.add_child(test)
+	if dev_tools:                                  # developer-only (cmdline --dev-economy / RR_DEV_ECONOMY=1)
+		var dev := Button.new()
+		dev.text = "DEV +10,000"
+		dev.focus_mode = Control.FOCUS_NONE
+		dev.custom_minimum_size = Vector2(300, 70)
+		dev.add_theme_font_size_override("font_size", 28)
+		dev.pressed.connect(dev_grant)
+		row.add_child(dev)
 	var close := Button.new()
 	close.text = "CLOSE"
 	close.focus_mode = Control.FOCUS_NONE
@@ -502,6 +510,15 @@ func _build_upgrade_panel() -> void:
 	vb.add_child(row)
 	upgrade_panel.add_child(pc)
 	ui.add_child(upgrade_panel)
+
+## Developer-only credit grant. Does nothing in a normal build.
+func dev_grant(amount: int = 10000) -> void:
+	if not dev_tools:
+		return
+	bank += amount
+	_save_progress()
+	_update_hud()
+	_refresh_upgrades()
 
 func get_level(key: String) -> int:
 	return int(levels.get(key, 0))
@@ -527,7 +544,7 @@ func open_upgrades() -> void:
 	upgrade_panel.visible = true
 
 func _refresh_upgrades() -> void:
-	(upgrade_panel.find_child("BankLabel", true, false) as Label).text = "Bank: %d points (every score is banked)" % bank
+	(upgrade_panel.find_child("BankLabel", true, false) as Label).text = "Credits: %d  (earned from your throws, separate from score)" % bank
 	for key in _up_rows.keys():
 		var lv: int = get_level(key)
 		var cost: int = upgrade_cost(key)
@@ -614,6 +631,7 @@ func reset() -> void:
 	town.fx = fx
 	fx.gore = gore
 	fx.clear_all()
+	_apply_theme(env_id)
 	scoring = Scoring.new()
 	scoring.combo_enabled = not classic
 	scoring.awarded.connect(_on_awarded)
@@ -653,6 +671,9 @@ func reset() -> void:
 	_hit_any = false
 	calm_t = 0.0
 	_trails.clear()
+	_oob_at = -1.0
+	_last_skip_t = -9.0
+	_air_since_skip = true
 	_popups = 0
 	_wound_down = false
 	_imp_t.clear()
@@ -676,6 +697,15 @@ func reset() -> void:
 	cam.global_transform = _cam_aim_xf
 	cam.fov = 56.0
 	_update_hud()
+
+## Every city gets its own sky tint (and its ground colour, set by Town) so it reads as its own place.
+func _apply_theme(env_id: String) -> void:
+	if _sky_mat == null:
+		return
+	var th: Dictionary = Rules.env_by_id(env_id)["theme"]
+	_sky_mat.sky_top_color = th["sky_top"]
+	_sky_mat.sky_horizon_color = th["sky_hz"]
+	_sky_mat.ground_horizon_color = th["sky_hz"]
 
 ## Where the pouch sits for a given aim. Clamped above the ground: a steep full pull used to put the
 ## ragdoll BELOW the ground (G1/G2 bug: such launches went nowhere).
@@ -743,7 +773,11 @@ func _update_aim() -> void:
 	aim_power = p.length()                                # 0..1 = the old power range, 1..1.45 = overdrive
 	var up: float = clampf(p.y, 0.05, 1.0) * (1.6 if classic else 1.05)   # classic = G1/G2 elevation; pivot launches flatter and faster
 	var side: float = -clampf(p.x, -1.0, 1.0) * SIDE_GAIN
-	aim_dir = Vector3(1.0, up, side).normalized()
+	if classic:
+		aim_dir = Vector3(1.0, up, side).normalized()
+	else:
+		# v13: the upward angle is soft-limited (Rules.soft_pitch_deg) so no gesture can fire a near-vertical rocket
+		aim_dir = Rules.launch_dir(Vector3(1.0, 0.0, side), up / sqrt(1.0 + side * side))
 	_set_aim_pose(aim_dir, aim_power)
 	_update_preview()
 	bar_bg.visible = true
@@ -768,7 +802,11 @@ static func air_drag_scale(p: float) -> float:
 	return clampf(1.0 - (p - 1.0) / (OVERDRIVE_MAX - 1.0), 0.0, 1.0)
 
 func launch_speed() -> float:
-	return speed_for_power(aim_power, classic) * (1.0 if classic else float(fxp.get("launch_mult", 1.0)))
+	var v: float = speed_for_power(aim_power, classic) * (1.0 if classic else float(fxp.get("launch_mult", 1.0)))
+	if classic:
+		return v
+	# v13: range/apex governor - no throw can fly over the whole playfield or reach the world wall
+	return Rules.governed_speed(v, asin(clampf(aim_dir.y, -1.0, 1.0)), fxp)
 
 func _update_preview() -> void:
 	var v: Vector3 = aim_dir * launch_speed()
@@ -855,6 +893,9 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 		t_first_impact = now
 		var air: float = now - t_launch
 		scoring.award("air", "AIRTIME %.1fs" % air, int(air * 50.0), "Airtime", pos)
+	if other.has_meta("boundary"):
+		_hit_boundary()
+		return
 	_hit_any = true
 	if speed > 3.0:
 		_last_event = now
@@ -950,16 +991,20 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 					ragdoll.clamp_omega(ragdoll.torso)
 			energy = Rules.energy_after(energy, fxp, speed)
 			var graze: float = float(resp["graze"])
-			if (mat == "ground" or mat == "trampoline") and graze > 0.5 and speed > 8.0:
+			if (mat == "ground" or mat == "trampoline" or mat == "water") and graze > 0.5 and speed > 8.0 \
+					and now - _last_skip_t > 0.35 and _air_since_skip:
+				# one physical bounce = one skip (v12 counted every body part touching the ground and paid 40*n)
 				skips += 1
-				scoring.award("skip_%d" % skips, "SKIP x%d" % skips, 40 * skips, "Skips", pos)
+				_last_skip_t = now
+				_air_since_skip = false
+				scoring.award("skip_%d" % skips, "SKIP x%d" % skips, Rules.skip_points(skips), "Skips", pos)
 				sfx.play("boing", -6.0, 1.0 + 0.05 * float(skips))
 			elif mat != "ground" and absf(float(resp["ricochet_deg"])) > 8.0 and speed > 9.0:
 				ricochets += 1
 				scoring.award("rico_%d_%d" % [other.get_instance_id(), ricochets], "RICOCHET!", 80, "Ricochets", pos)
 			var lab: String = str(mods["label"])
 			if lab != "" and speed > 9.0:
-				scoring.award("style_%s_%d" % [lab, int(now * 2.0)], lab + "!", 25, "Style", pos)
+				scoring.award("style_%s_%d" % [lab, int(now)], lab + "!", 25, "Style", pos)
 			if mat == "metal" and speed > 8.0:
 				fx.sparks(pos, n)
 	# ---------------- body damage: limbs fly off, hard hits explode, fire spreads
@@ -1024,6 +1069,19 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 			fx.blood(pos, n, 1.8)
 			fx.splat(pos, 1.2)
 			_burst(pos)
+
+## The world edge is NOT a destructive surface. Touching it ends the throw cleanly: no blood, limbs, explosions or score
+## (v12: the invisible wall was treated as masonry, so a fast throw "exploded" in mid-air against nothing).
+func _hit_boundary() -> void:
+	if _oob_at >= 0.0:
+		return
+	_oob_at = flight_t + 0.45
+	lbl_hint.visible = true
+	lbl_hint.text = "OUT OF BOUNDS"
+	for bd in ragdoll.bodies:
+		bd.linear_velocity = bd.linear_velocity * 0.15
+		bd.angular_velocity = bd.angular_velocity * 0.3
+	ragdoll.burning.clear()
 
 ## Tear a limb off: stylised, bounded, never trivial.
 func _lose_limb(part: RigidBody3D, n: Vector3, speed: float, pos: Vector3) -> void:
@@ -1231,7 +1289,7 @@ func _update_hud() -> void:
 	for t in town.targets:
 		if scoring.keys.has(str(t["key"])):
 			hit += 1
-	lbl_stats.text = "Best %d   Bank %d   Try #%d   Targets %d/%d" % [best, bank, attempt, hit, town.targets.size()]
+	lbl_stats.text = "Best %d   Credits %d   Try #%d   Targets %d/%d" % [best, bank, attempt, hit, town.targets.size()]
 
 # ---------------------------------------------------------------- loop
 func _physics_process(dt: float) -> void:
@@ -1259,6 +1317,8 @@ func _physics_process(dt: float) -> void:
 	_prev_x = c.x
 	var now: float = flight_t
 	var spd: float = ragdoll.max_speed() if classic else ragdoll.motion_speed()
+	if not classic and ragdoll.torso.global_position.y > 0.9:
+		_air_since_skip = true
 	var oob: bool = c.y < -20.0 or c.x > Town.WORLD_X_MAX + 20.0 or absf(c.z) > Town.WORLD_Z + 20.0
 	if classic:
 		# end of flight: settled, or nothing interesting happening any more, or out of time/bounds
@@ -1272,7 +1332,7 @@ func _physics_process(dt: float) -> void:
 	btn_skip.visible = now > SKIP_AFTER_S
 	var over: bool = Rules.run_finished({"elapsed": now, "landed": _hit_any, "max_speed": spd, "calm_t": calm_t,
 		"event_age": now - maxf(_last_event, t_launch), "energy": energy, "max_t": MAX_FLIGHT_S})
-	if over or oob:
+	if over or oob or (_oob_at >= 0.0 and flight_t >= _oob_at):
 		_finish()
 
 ## Per-frame pivot systems: airborne spin control, burning spread, blood trails, combo display.
@@ -1335,7 +1395,8 @@ func _finish() -> void:
 	if not ra.is_empty():
 		scoring.award(str(ra["key"]), str(ra["name"]), int(ra["pts"]), "Targets", c)
 	var total: int = scoring.total()
-	bank += total
+	last_credit = Rules.bank_credit(scoring.lines) if not classic else total
+	bank += last_credit
 	_save_progress()
 	var new_best: bool = total > best
 	if new_best:
@@ -1351,6 +1412,7 @@ func _finish() -> void:
 	lines.append("Targets: %d/%d  %s" % [hit_names.size(), town.targets.size(), ", ".join(hit_names)])
 	lines.append("frames avg %.1fms worst %.1fms" % [avg * 1000.0, frame_worst * 1000.0])
 	if not classic:
+		lines.append("+%d CREDITS banked for upgrades (score and credits are separate)" % last_credit)
 		lines.append("Skips %d   Ricochets %d   Limbs lost %d   Fires %d   Best combo x%d" % [skips, ricochets, limbs_lost, fires_started, scoring.best_combo])
 	lbl_breakdown.text = "\n".join(lines)
 	btn_skip.visible = false
@@ -1417,14 +1479,21 @@ func _load_best() -> void:
 		bank = int(cf.get_value("progress", "bank", 0))
 		for key in Rules.UPGRADE_ORDER:
 			levels[key] = clampi(int(cf.get_value("progress", "up_" + key, 0)), 0, int((Rules.UPGRADES[key] as Dictionary)["max"]))
+		if int(cf.get_value("progress", "schema", 0)) < ECONOMY_SCHEMA:
+			# v12 and earlier banked score 1:1 and had a +10,000 test button: that progress is not real progression.
+			bank = 0
+			levels = Rules.empty_levels()
+			economy_reset_note = true
+			_save_progress()
 		char_idx = int(cf.get_value("choice", "char", 0))
-		env_idx = int(cf.get_value("choice", "env", 0))
+		env_idx = Rules.env_index(str(cf.get_value("choice", "env_id", "downtown")))
 		gore = bool(cf.get_value("settings", "gore", true))
 
 func _save_progress() -> void:
 	var cf := ConfigFile.new()
 	cf.load("user://launch.cfg")
 	cf.set_value("progress", "bank", bank)
+	cf.set_value("progress", "schema", ECONOMY_SCHEMA)
 	for key in Rules.UPGRADE_ORDER:
 		cf.set_value("progress", "up_" + key, get_level(key))
 	cf.save("user://launch.cfg")
@@ -1433,7 +1502,7 @@ func _save_choice() -> void:
 	var cf := ConfigFile.new()
 	cf.load("user://launch.cfg")
 	cf.set_value("choice", "char", char_idx)
-	cf.set_value("choice", "env", env_idx)
+	cf.set_value("choice", "env_id", str(Rules.ENVIRONMENTS[env_idx]["id"]))
 	cf.save("user://launch.cfg")
 
 func set_gore(on: bool) -> void:
