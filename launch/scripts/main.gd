@@ -6,16 +6,23 @@ enum State { AIM, FLIGHT, RESULT }
 
 const LAUNCH_ORIGIN := Vector3(0.0, 2.3, 0.0)
 const PULL_LEN := 3.6
-const MIN_SPEED := 9.0
-const MAX_SPEED := 32.0
+const MIN_SPEED := 12.0           # v0.4 tuning (classic G1/G2: 9.0 / 32.0, kept for the regression baseline)
+const MAX_SPEED := 40.0
+const CLASSIC_MIN_SPEED := 9.0
+const CLASSIC_MAX_SPEED := 32.0
 const MIN_POWER := 0.12
 const TRAJ_DOTS := 30
 const AIM_MAX_PX := 240.0         # drag length (virtual px) for full power; measured along the diagonal pull
 const SIDE_GAIN := 1.0            # lateral aim gain (was 0.7 in G1: far-left/right targets need up to ~45 deg)
 const MAX_FLIGHT_S := 13.0
 const OVERDRIVE_MAX := 1.45       # pull past the old full-power point (1.0) for extra speed
-const OVERDRIVE_SPEED := 46.0     # launch speed at full overdrive (old maximum 32.0 is reached at power 1.0)
+const OVERDRIVE_SPEED := 56.0     # launch speed at full overdrive (old maximum 32.0 is reached at power 1.0)
 const MIN_MARGIN := Vector2(40.0, 30.0)
+const SKID_ACCEL := 6.0           # m/s^2 pushed along the ground velocity so the ragdoll skids through things
+const SKID_MAX_SPEED := 22.0       # assist tapers to nothing at this ground speed (no runaway)
+var _skid_dir := Vector3.RIGHT      # horizontal launch heading; the assist only ever pushes forward along it
+const MAX_UPGRADE := 5
+const UPGRADE_COST := [300, 600, 1000, 1600, 2500]
 const SKIP_AFTER_S := 1.5
 
 var state: int = State.AIM
@@ -48,6 +55,15 @@ var frame_n: int = 0
 var frame_worst: float = 0.0
 var _smash_vel_fix: Dictionary = {}
 var force_rebuild: bool = false     # tests: rebuild the town on every reset (instead of the fast in-place reset)
+var classic: bool = false           # tests: G1/G2 speeds, materials and no skid assist (physics regression vs 4.4.1)
+var up_power: int = 0
+var up_speed: int = 0
+var up_traj: int = 0
+var bank: int = 0
+var _flash_light: OmniLight3D
+var upgrade_panel: Control
+var _up_rows: Dictionary = {}
+var btn_upgrades: Button
 var legacy_world: bool = false      # tests: original small village only (physics baseline)
 var view_right: bool = false        # false: pull toward lower-left, true: lower-right
 var _basis_back: Vector2 = Vector2(-0.77, 0.64)    # screen direction of "pull back" (world -X)
@@ -135,7 +151,7 @@ func _setup_environment() -> void:
 
 func _setup_camera() -> void:
 	cam = Camera3D.new()
-	cam.fov = 66.0
+	cam.fov = 56.0
 	cam.near = 0.2
 	cam.far = 500.0
 	add_child(cam)
@@ -150,8 +166,8 @@ func _setup_camera() -> void:
 func _compute_aim_camera() -> void:
 	var zs: float = -1.0 if view_right else 1.0           # camera sits on the +Z side (pull toward lower-left) or -Z side
 	var fh := Vector3(cos(deg_to_rad(30.0)), 0.0, -sin(deg_to_rad(30.0)) * zs)
-	var pos: Vector3 = LAUNCH_ORIGIN - fh * 14.0 + Vector3(0, 8.0, 0)
-	_cam_aim_xf = Transform3D(Basis.IDENTITY, pos).looking_at(LAUNCH_ORIGIN + fh * 26.0 + Vector3(0, 3.0, 0), Vector3.UP)
+	var pos: Vector3 = LAUNCH_ORIGIN - fh * 26.0 + Vector3(0, 13.0, 0)
+	_cam_aim_xf = Transform3D(Basis.IDENTITY, pos).looking_at(LAUNCH_ORIGIN + fh * 22.0 + Vector3(0, 0.5, 0), Vector3.UP)
 	_update_aim_basis()
 
 func _update_aim_basis() -> void:
@@ -183,6 +199,12 @@ func _setup_dots() -> void:
 		_dots.append(d)
 
 func _setup_particles() -> void:
+	_flash_light = OmniLight3D.new()
+	_flash_light.light_color = Color(1.0, 0.6, 0.2)
+	_flash_light.omni_range = 26.0
+	_flash_light.light_energy = 0.0
+	_flash_light.shadow_enabled = false
+	add_child(_flash_light)
 	for i in 6:
 		var p := CPUParticles3D.new()
 		p.one_shot = true
@@ -274,7 +296,19 @@ func _setup_ui() -> void:
 	btn_again.add_theme_font_size_override("font_size", 52)
 	btn_again.focus_mode = Control.FOCUS_NONE
 	btn_again.pressed.connect(_on_again)
-	vb.add_child(btn_again)
+	btn_upgrades = Button.new()
+	btn_upgrades.text = "UPGRADES"
+	btn_upgrades.custom_minimum_size = Vector2(300, 100)
+	btn_upgrades.add_theme_font_size_override("font_size", 40)
+	btn_upgrades.focus_mode = Control.FOCUS_NONE
+	btn_upgrades.pressed.connect(open_upgrades)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 14)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(btn_again)
+	row.add_child(btn_upgrades)
+	vb.add_child(row)
 	result_panel.visible = false
 	ui.add_child(result_panel)
 	# dev reset
@@ -290,6 +324,111 @@ func _setup_ui() -> void:
 	btn_reset.offset_bottom = 92
 	btn_reset.pressed.connect(_on_again)
 	ui.add_child(btn_reset)
+	_build_upgrade_panel()
+
+const UP_INFO := {
+	"power": ["POWER", "heavier ragdoll, harder skid, plows through more"],
+	"speed": ["SPEED", "+6% launch speed per level"],
+	"traj": ["TRAJECTORY", "longer aim preview, less air drag"]}
+
+func _build_upgrade_panel() -> void:
+	upgrade_panel = Control.new()
+	upgrade_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	upgrade_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	upgrade_panel.visible = false
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.55)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	upgrade_panel.add_child(dim)
+	var pc := PanelContainer.new()
+	pc.anchor_left = 0.5
+	pc.anchor_right = 0.5
+	pc.anchor_top = 0.5
+	pc.anchor_bottom = 0.5
+	pc.offset_left = -520
+	pc.offset_right = 520
+	pc.offset_top = -280
+	pc.offset_bottom = 280
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.05, 0.07, 0.12, 0.95)
+	sb.set_corner_radius_all(24)
+	sb.set_content_margin_all(18)
+	pc.add_theme_stylebox_override("panel", sb)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 12)
+	pc.add_child(vb)
+	var title := _label(44, HORIZONTAL_ALIGNMENT_CENTER)
+	title.text = "UPGRADES"
+	vb.add_child(title)
+	var bl := _label(30, HORIZONTAL_ALIGNMENT_CENTER)
+	bl.name = "BankLabel"
+	vb.add_child(bl)
+	for key in ["power", "speed", "traj"]:
+		var r := HBoxContainer.new()
+		r.add_theme_constant_override("separation", 12)
+		var l := _label(26, HORIZONTAL_ALIGNMENT_LEFT)
+		l.custom_minimum_size = Vector2(700, 0)
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		r.add_child(l)
+		var b := Button.new()
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(250, 90)
+		b.add_theme_font_size_override("font_size", 30)
+		b.pressed.connect(func():
+			buy(key)
+			_refresh_upgrades())
+		r.add_child(b)
+		vb.add_child(r)
+		_up_rows[key] = {"label": l, "btn": b}
+	var close := Button.new()
+	close.text = "CLOSE"
+	close.focus_mode = Control.FOCUS_NONE
+	close.custom_minimum_size = Vector2(300, 80)
+	close.add_theme_font_size_override("font_size", 36)
+	close.pressed.connect(func(): upgrade_panel.visible = false)
+	vb.add_child(close)
+	upgrade_panel.add_child(pc)
+	ui.add_child(upgrade_panel)
+
+func get_level(key: String) -> int:
+	match key:
+		"power": return up_power
+		"speed": return up_speed
+		"traj": return up_traj
+	return 0
+
+func upgrade_cost(key: String) -> int:
+	var lv: int = get_level(key)
+	return -1 if lv >= MAX_UPGRADE else int(UPGRADE_COST[lv])
+
+## Spend banked points on a level. Returns true if bought.
+func buy(key: String) -> bool:
+	var cost: int = upgrade_cost(key)
+	if cost < 0 or bank < cost:
+		return false
+	bank -= cost
+	match key:
+		"power": up_power += 1
+		"speed": up_speed += 1
+		"traj": up_traj += 1
+	_save_progress()
+	_update_hud()
+	return true
+
+func open_upgrades() -> void:
+	_refresh_upgrades()
+	upgrade_panel.visible = true
+
+func _refresh_upgrades() -> void:
+	(upgrade_panel.find_child("BankLabel", true, false) as Label).text = "Bank: %d points (you bank every score)" % bank
+	for key in _up_rows.keys():
+		var lv: int = get_level(key)
+		var cost: int = upgrade_cost(key)
+		(_up_rows[key]["label"] as Label).text = "%s   Lv %d/%d   %s" % [UP_INFO[key][0], lv, MAX_UPGRADE, UP_INFO[key][1]]
+		var bt := _up_rows[key]["btn"] as Button
+		bt.text = "MAX" if cost < 0 else "BUY  %d" % cost
+		bt.disabled = cost < 0 or bank < cost
 
 func _label(sz: int, align: int) -> Label:
 	var l := Label.new()
@@ -353,9 +492,10 @@ func reset() -> void:
 		town.piece_released.connect(_on_piece_released)
 	scoring = Scoring.new()
 	scoring.awarded.connect(_on_awarded)
+	scoring.claimed.connect(town.claim)
 	ragdoll = Ragdoll.new()
 	add_child(ragdoll)
-	ragdoll.build(Ragdoll.random_letter(), Transform3D(Basis.IDENTITY, LAUNCH_ORIGIN))
+	ragdoll.build(Ragdoll.random_letter(), Transform3D(Basis.IDENTITY, LAUNCH_ORIGIN), not classic, 0.0 if classic else 1.0 * up_power)
 	ragdoll.impact.connect(_on_impact)
 	state = State.AIM
 	dragging = false
@@ -377,6 +517,8 @@ func reset() -> void:
 	_compute_aim_camera()
 	_set_aim_pose(Vector3.RIGHT, 0.0)
 	result_panel.visible = false
+	if upgrade_panel:
+		upgrade_panel.visible = false
 	lbl_hint.visible = true
 	lbl_hint.text = "DRAG BACK, AIM, RELEASE!" if attempt <= 1 else "AGAIN! Drag back and let go."
 	for d in _dots:
@@ -453,24 +595,26 @@ func _update_aim() -> void:
 	lbl_hint.text = "OVERDRIVE!"
 	_bar_tick.position.x = 3.0 + 314.0 / OVERDRIVE_MAX
 
-static func speed_for_power(p: float) -> float:
+static func speed_for_power(p: float, cls: bool = false) -> float:
+	var lo: float = CLASSIC_MIN_SPEED if cls else MIN_SPEED
+	var hi: float = CLASSIC_MAX_SPEED if cls else MAX_SPEED
 	if p <= 1.0:
-		return lerpf(MIN_SPEED, MAX_SPEED, pow(p, 0.9))      # identical to G1/G2
-	return lerpf(MAX_SPEED, OVERDRIVE_SPEED, clampf((p - 1.0) / (OVERDRIVE_MAX - 1.0), 0.0, 1.0))
+		return lerpf(lo, hi, pow(p, 0.9))
+	return lerpf(hi, OVERDRIVE_SPEED if not cls else 46.0, clampf((p - 1.0) / (OVERDRIVE_MAX - 1.0), 0.0, 1.0))
 
 ## 1.0 up to the old full power; fades to 0 at full overdrive so the longest shots fly nearly ballistic.
 static func air_drag_scale(p: float) -> float:
 	return clampf(1.0 - (p - 1.0) / (OVERDRIVE_MAX - 1.0), 0.0, 1.0)
 
 func launch_speed() -> float:
-	return speed_for_power(aim_power)
+	return speed_for_power(aim_power, classic) * (1.0 if classic else (1.0 + 0.06 * up_speed))
 
 func _update_preview() -> void:
 	var v: Vector3 = aim_dir * launch_speed()
 	var p0: Vector3 = ragdoll.centre()
 	var g: float = float(ProjectSettings.get_setting("physics/3d/default_gravity", 9.8))
 	for i in _dots.size():
-		var t: float = 0.16 * float(i + 1)
+		var t: float = 0.16 * (1.0 if classic else 1.0 + 0.25 * up_traj) * float(i + 1)
 		var pos: Vector3 = p0 + v * t + Vector3(0, -0.5 * g * t * t, 0)
 		_dots[i].global_position = pos
 		_dots[i].visible = pos.y > 0.1 and aim_power >= MIN_POWER
@@ -480,6 +624,7 @@ func fire() -> void:
 	if state != State.AIM:
 		return
 	state = State.FLIGHT
+	_skid_dir = Vector3(aim_dir.x, 0.0, aim_dir.z).normalized()
 	t_launch = 0.0
 	flight_t = 0.0
 	for d in _dots:
@@ -487,7 +632,7 @@ func fire() -> void:
 	bar_bg.visible = false
 	town.set_band(LAUNCH_ORIGIN)
 	var spin := Vector3(randf_range(-6, 6), randf_range(-3, 3), randf_range(-8, 8))
-	ragdoll.launch(aim_dir * launch_speed(), spin, air_drag_scale(aim_power))
+	ragdoll.launch(aim_dir * launch_speed(), spin, air_drag_scale(aim_power) * (1.0 if classic else maxf(1.0 - 0.12 * up_traj, 0.0)))
 	sfx.play("launch", 0.0, randf_range(0.9, 1.1))
 	trauma = 0.25
 	lbl_hint.visible = false
@@ -522,19 +667,47 @@ func _on_impact(part: RigidBody3D, other: Node, speed: float, pos: Vector3) -> v
 				if scoring.add_smash(rp.get_instance_id(), pts, rp.global_position):
 					dmg += pts
 			scoring.awarded.emit("SMASH x%d" % released.size(), dmg, pos)
-			# bust through: the thing we hit gives way, keep most of our momentum
-			part.linear_velocity = vel * 0.6
+			# bust through: the thing we hit gives way, keep most of our momentum (skid on through)
+			if classic:
+				part.linear_velocity = vel * 0.6
+			else:
+				var keep: float = 0.85 + 0.02 * up_power
+				for bd in ragdoll.bodies:
+					bd.linear_velocity = bd.linear_velocity.lerp(vel * keep, 0.8)
 			_burst(pos)
 			sfx.play("crash", 2.0, randf_range(0.8, 1.1))
 			trauma = maxf(trauma, 0.7)
+	elif other.has_meta("decor") and speed > 5.0:
+		var dvel: Vector3 = ragdoll.prev_velocity(part)
+		if town.break_decor(other as StaticBody3D, dvel.normalized(), speed):
+			scoring.add_smash(other.get_instance_id(), int(8.0 * clampf(speed / 14.0, 0.6, 2.5)), pos)
+			if not classic:
+				var dk: float = 0.88 + 0.02 * up_power
+				for bd in ragdoll.bodies:
+					bd.linear_velocity = bd.linear_velocity.lerp(dvel * dk, 0.7)
+			_burst(pos)
+			trauma = maxf(trauma, 0.35)
+			if town.decor_smashed % 10 == 0:
+				scoring.award("demo_%d" % town.decor_smashed, "DEMOLITION x%d" % town.decor_smashed, town.decor_smashed * 10, "Impacts", pos)
 	elif other.has_meta("ground") and not _landed and speed > 3.0:
 		_landed = true
+		if not classic:
+			# arcade: the first touchdown keeps most of the forward speed so it skids on instead of dead-stopping
+			var pv: Vector3 = ragdoll.prev_velocity(part)
+			var hv := Vector3(pv.x, 0.0, pv.z) * (0.62 + 0.02 * up_power)
+			for bd in ragdoll.bodies:
+				var cv: Vector3 = bd.linear_velocity
+				var tv := Vector3(hv.x, cv.y, hv.z)
+				if Vector2(cv.x, cv.z).length() < hv.length():
+					bd.linear_velocity = cv.lerp(tv, 0.8)
 		var ra: Dictionary = town.ring_award(pos)
 		if not ra.is_empty():
 			scoring.award(str(ra["key"]), str(ra["name"]), int(ra["pts"]), "Targets", pos)
 			if bool(ra["dead"]):
 				trauma = 0.9
 				sfx.play("boing", 2.0, 1.2)
+	elif other.has_meta("prop") and other.has_meta("explosive") and speed > 5.0:
+		_blast(other as RigidBody3D)
 	elif other.has_meta("prop") and speed > 6.0:
 		if other.has_meta("bonus"):
 			var bb: Dictionary = other.get_meta("bonus")
@@ -544,6 +717,35 @@ func _on_impact(part: RigidBody3D, other: Node, speed: float, pos: Vector3) -> v
 		_burst(pos)
 	elif other.has_meta("ground") == false and not other.has_meta("kind") and not other.has_meta("prop") and speed > 10.0:
 		scoring.award("hit_%d" % other.get_instance_id(), "BONK!", 25, "Impacts", pos)
+
+func _blast(b: RigidBody3D) -> void:
+	var res: Dictionary = town.detonate(b)
+	var blasts: Array = res["blasts"]
+	if blasts.is_empty():
+		return
+	var dmg: int = 0
+	for rp in (res["released"] as Array):
+		if scoring.add_smash((rp as RigidBody3D).get_instance_id(), damage_points(rp as RigidBody3D, 24.0), (rp as RigidBody3D).global_position):
+			dmg += damage_points(rp as RigidBody3D, 24.0)
+	scoring.award("tnt_%d" % b.get_instance_id(), "BOOM x%d" % blasts.size(), 60 * blasts.size() + dmg, "Explosions", b.global_position)
+	for c in blasts:
+		_burst(c)
+	_flash(blasts[0])
+	trauma = 1.0
+	sfx.play("crash", 4.0, 0.7)
+	_last_event = flight_t
+	for c in blasts:
+		for bd in ragdoll.bodies:
+			var dv: Vector3 = bd.global_position - (c as Vector3)
+			var dist: float = dv.length()
+			if dist < 9.0:
+				bd.apply_central_impulse((dv.normalized() + Vector3(0, 0.5, 0)).normalized() * 20.0 * (1.0 - dist / 9.0) * bd.mass)
+
+func _flash(pos: Vector3) -> void:
+	_flash_light.global_position = pos + Vector3(0, 1.5, 0)
+	_flash_light.light_energy = 14.0
+	var tw := create_tween()
+	tw.tween_property(_flash_light, "light_energy", 0.0, 0.3)
 
 ## Damage score: heavier pieces and harder hits are worth more.
 func damage_points(p: RigidBody3D, impact_speed: float) -> int:
@@ -590,13 +792,15 @@ func _update_hud() -> void:
 	for t in town.targets:
 		if scoring.keys.has(str(t["key"])):
 			hit += 1
-	lbl_stats.text = "Best %d   Try #%d   Targets %d/%d" % [best, attempt, hit, town.targets.size()]
+	lbl_stats.text = "Best %d   Bank %d   Try #%d   Targets %d/%d" % [best, bank, attempt, hit, town.targets.size()]
 
 # ---------------------------------------------------------------- loop
 func _physics_process(dt: float) -> void:
 	if state != State.FLIGHT:
 		return
 	flight_t += dt
+	if not classic:
+		_skid(dt)
 	var c: Vector3 = ragdoll.centre()
 	scoring.set_distance(c.x)
 	flip_angle += ragdoll.torso.angular_velocity.length() * dt
@@ -622,13 +826,30 @@ func _physics_process(dt: float) -> void:
 	if settle_timer > 0.6 or quiet or elapsed > MAX_FLIGHT_S or oob:
 		_finish()
 
+## Arcade assist: keeps pushing along the ground velocity so the ragdoll skids through things instead of rolling to a stop.
+func _skid(dt: float) -> void:
+	if ragdoll.torso.global_position.y >= 2.8:
+		return
+	var v: Vector3 = ragdoll.torso.linear_velocity
+	var fwd: float = v.x * _skid_dir.x + v.z * _skid_dir.z
+	# only while still travelling forward; taper out so it can never run away or push backwards
+	if fwd < 1.5 or fwd >= SKID_MAX_SPEED:
+		return
+	var accel: float = (SKID_ACCEL + 1.2 * float(up_power)) * (1.0 - fwd / SKID_MAX_SPEED)
+	for bd in ragdoll.bodies:
+		bd.apply_central_impulse(_skid_dir * accel * dt * bd.mass)
+
 func _finish() -> void:
+	if state == State.RESULT:
+		return
 	state = State.RESULT
 	var c: Vector3 = ragdoll.centre()
 	var ra: Dictionary = town.ring_award(c)
 	if not ra.is_empty():
 		scoring.award(str(ra["key"]), str(ra["name"]), int(ra["pts"]), "Targets", c)
 	var total: int = scoring.total()
+	bank += total
+	_save_progress()
 	var new_best: bool = total > best
 	if new_best:
 		best = total
@@ -698,6 +919,19 @@ func _load_best() -> void:
 	if cf.load("user://launch.cfg") == OK:
 		best = int(cf.get_value("score", "best", 0))
 		view_right = bool(cf.get_value("view", "pull_right", false))
+		bank = int(cf.get_value("progress", "bank", 0))
+		up_power = int(cf.get_value("progress", "power", 0))
+		up_speed = int(cf.get_value("progress", "speed", 0))
+		up_traj = int(cf.get_value("progress", "traj", 0))
+
+func _save_progress() -> void:
+	var cf := ConfigFile.new()
+	cf.load("user://launch.cfg")
+	cf.set_value("progress", "bank", bank)
+	cf.set_value("progress", "power", up_power)
+	cf.set_value("progress", "speed", up_speed)
+	cf.set_value("progress", "traj", up_traj)
+	cf.save("user://launch.cfg")
 
 func _save_best() -> void:
 	var cf := ConfigFile.new()

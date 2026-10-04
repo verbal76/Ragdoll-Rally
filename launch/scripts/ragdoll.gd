@@ -35,7 +35,7 @@ static func _rel_xf(node: Node, root: Node) -> Transform3D:
 	return t
 
 ## Build all bodies and joints; the rig origin is placed at `pose`.
-func build(letter: String, pose: Transform3D) -> void:
+func build(letter: String, pose: Transform3D, bouncy: bool = false, extra_mass: float = 0.0) -> void:
 	var inst: Node3D = (load(scene_path(letter)) as PackedScene).instantiate()
 	var scale_xf := Transform3D(Basis.from_scale(Vector3.ONE * CHAR_SCALE), Vector3.ZERO)
 	var xf: Dictionary = {}
@@ -52,13 +52,13 @@ func build(letter: String, pose: Transform3D) -> void:
 		m.owner = null
 	var origin: Vector3 = (box["torso"] as AABB).get_center()
 	var phys := PhysicsMaterial.new()
-	phys.friction = 0.7
-	phys.bounce = 0.25
+	phys.friction = 0.45 if bouncy else 0.7        # slidier + bouncier than G1/G2 so it skids and ricochets
+	phys.bounce = 0.55 if bouncy else 0.25
 	for pn in PARTS:
 		var b: AABB = box[pn]
 		var body := RigidBody3D.new()
 		body.name = pn
-		body.mass = MASS[pn]
+		body.mass = MASS[pn] + (extra_mass if pn == "torso" else 0.0)
 		body.collision_layer = 2
 		body.collision_mask = 1 | 4
 		body.physics_material_override = phys

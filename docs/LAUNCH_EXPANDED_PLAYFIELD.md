@@ -36,3 +36,12 @@ Response: **the old power is untouched, the world is rebuilt around it, and a ne
 - Reaching the far castle needs near-full overdrive (a long diagonal drag of about 350 px); distant labels overlap near gates.
 - Decorative cottages/trees are immovable (they stop the ragdoll but do not break).
 - Boundary walls are tall invisible colliders: a very high lob can bounce off thin air at the edge.
+
+## Mayhem + upgrades round (b10+, `launch-g2m-b*`)
+Owner feedback on b9: catapult too close, too little power, no skid/bounce, city too sparse.
+- Camera pulled back (26 m behind, 13 m up) so there is room to pull back; speeds 12-40 m/s (overdrive to 56).
+- Skid assist keeps the ragdoll sliding along the ground; bouncier ragdoll/ground/stone/props (classic mode keeps the G1/G2 values for the physics regression).
+- Red TNT barrels with chain explosions; glowing light beams over every target (dim when claimed).
+- Upgrades (Power / Speed / Trajectory, 5 levels, bought with banked score) from the result panel.
+- Dense city: ~880 breakable cottages/trees (MultiMesh instances + one static collider each, pooled debris) filling the blocks between the targets, so the flight corridor always has something to hit; demolition streak bonus.
+- OTA compat fingerprint unchanged (`r2-e691ce8f7ee3`).

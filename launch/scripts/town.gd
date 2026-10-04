@@ -25,20 +25,25 @@ var band_l: MeshInstance3D
 var band_r: MeshInstance3D
 var targets: Array[Dictionary] = []     # {key, name, pts, pos, region}
 var released_order: Array[RigidBody3D] = []
-var legacy: bool = false                # tests: original small village only
+var legacy: bool = false                # tests: original small village only (also the classic G1/G2 materials)
+var _beams: Dictionary = {}             # target key -> [beam, label]
+var tnt: Array[RigidBody3D] = []
 var rings: Array[Dictionary] = []       # landing rings {key, name, center: Vector2, r, base}
 var gaps: Array[Dictionary] = []        # thread-the-gap targets {key, name, pts, x, half, ymax}
 var _reserved: Array[Rect2] = []        # keep-out zones for the decorative city
 var _decor_walls: Array[Transform3D] = []
 var _decor_roofs: Array[Transform3D] = []
 var _decor_trees: Array[Transform3D] = []
-var _decor_body: StaticBody3D
+var _occupied: Array[Vector2] = []
+var static_pos: Array[Vector3] = []     # immovable kit pieces (castle walls, gates...), for density checks
 var _cap_timer: float = 0.0
+var smash_push: float = 0.45            # debris launch factor (0.8 in the mayhem tuning)
 
 func build(p_legacy: bool = false) -> void:
 	legacy = p_legacy
-	_phys_stone.friction = 0.8
-	_phys_stone.bounce = 0.12
+	smash_push = 0.45 if legacy else 0.8
+	_phys_stone.friction = 0.8 if legacy else 0.6
+	_phys_stone.bounce = 0.12 if legacy else 0.4
 	_ground()
 	_launcher()
 	_house()
@@ -57,6 +62,7 @@ func build(p_legacy: bool = false) -> void:
 		_gate_and_keep()
 		_filler()
 		_deep_city()
+		_dense_city()
 		_perimeter()
 		_decor_city()
 
@@ -88,8 +94,8 @@ func _ground() -> void:
 	g.collision_layer = 1
 	g.collision_mask = 0
 	var pm := PhysicsMaterial.new()
-	pm.friction = 0.9
-	pm.bounce = 0.25
+	pm.friction = 0.9 if legacy else 0.6
+	pm.bounce = 0.25 if legacy else 0.45
 	g.physics_material_override = pm
 	var cs := CollisionShape3D.new()
 	var sh := BoxShape3D.new()
@@ -176,6 +182,7 @@ func _static_kit(model: String, tile: Vector3, size: Vector3 = Vector3.ONE) -> S
 	b.collision_mask = 0
 	b.physics_material_override = _phys_stone
 	b.position = Vector3(tile.x * S, tile.y * S + h * 0.5, tile.z * S)
+	static_pos.append(b.position)
 	var cs := CollisionShape3D.new()
 	var sh := BoxShape3D.new()
 	sh.size = size * S
@@ -195,8 +202,8 @@ func _prop(model: String, pos: Vector3, real_size: Vector3, mass: float, scale_m
 	b.collision_layer = 4
 	b.collision_mask = 1 | 2 | 4
 	var pm := PhysicsMaterial.new()
-	pm.friction = 0.7
-	pm.bounce = 0.3
+	pm.friction = 0.7 if legacy else 0.6
+	pm.bounce = 0.3 if legacy else 0.5
 	b.physics_material_override = pm
 	b.can_sleep = true
 	var cs := CollisionShape3D.new()
@@ -390,7 +397,7 @@ func smash(hit: RigidBody3D, hit_pos: Vector3, dir: Vector3, speed: float) -> Ar
 		var same: bool = all_group and p.get_meta("group", "") == group
 		if same or d <= radius:
 			var fall: float = 1.0 - clampf(d / maxf(radius, 0.01), 0.0, 1.0) * 0.6
-			var v: Vector3 = dir * speed * 0.45 * fall + (p.global_position - hit_pos).normalized() * 2.0 + Vector3(0, 2.0, 0)
+			var v: Vector3 = dir * speed * smash_push * fall + (p.global_position - hit_pos).normalized() * 2.0 + Vector3(0, 2.0, 0)
 			release(p, v)
 			out.append(p)
 	return out
@@ -420,6 +427,25 @@ func _target(key: String, nm: String, pts: int, pos: Vector3) -> Dictionary:
 		l.modulate = Color(0.95, 0.62, 0.3) if pts < 200 else (Color(0.85, 0.92, 1.0) if pts < 500 else (Color(1.0, 0.86, 0.2) if pts < 1000 else Color(1.0, 0.45, 0.95)))
 		l.position = pos + Vector3(0, 3.2, 0)
 		add_child(l)
+		# glowing light beam so the target can be spotted from anywhere in the city
+		var beam := MeshInstance3D.new()
+		var cm := CylinderMesh.new()
+		cm.top_radius = 0.35
+		cm.bottom_radius = 0.7
+		cm.height = 90.0
+		cm.radial_segments = 8
+		var bm := StandardMaterial3D.new()
+		bm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		bm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		bm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		var tc: Color = l.modulate
+		bm.albedo_color = Color(tc.r, tc.g, tc.b, 0.32)
+		cm.material = bm
+		beam.mesh = cm
+		beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		beam.position = Vector3(pos.x, 45.0, pos.z)
+		add_child(beam)
+		_beams[key] = [beam, l]
 	return t
 
 func _bonus(body: Node, key: String, nm: String, pts: int) -> void:
@@ -541,11 +567,11 @@ func _gate_and_keep() -> void:
 func _perimeter() -> void:
 	# stone boundary walls (collider extends high so nothing can leave the field)
 	var col := Color(0.46, 0.46, 0.5)
-	_static_box(Vector3(WORLD_X_MAX, 30.0, 0.0), Vector3(2.0, 60.0, WORLD_Z * 2.0 + 4.0), col, false)
+	_static_box(Vector3(WORLD_X_MAX, 200.0, 0.0), Vector3(2.0, 400.0, WORLD_Z * 2.0 + 4.0), col, false)
 	_static_box(Vector3(WORLD_X_MAX, 2.0, 0.0), Vector3(2.0, 4.0, WORLD_Z * 2.0 + 4.0), col)
-	_static_box(Vector3(WORLD_X_MIN, 30.0, 0.0), Vector3(2.0, 60.0, WORLD_Z * 2.0 + 4.0), col, false)
+	_static_box(Vector3(WORLD_X_MIN, 200.0, 0.0), Vector3(2.0, 400.0, WORLD_Z * 2.0 + 4.0), col, false)
 	for sgn in [-1.0, 1.0]:
-		_static_box(Vector3((WORLD_X_MAX + WORLD_X_MIN) * 0.5, 30.0, sgn * WORLD_Z), Vector3(WORLD_X_MAX - WORLD_X_MIN, 60.0, 2.0), col, false)
+		_static_box(Vector3((WORLD_X_MAX + WORLD_X_MIN) * 0.5, 200.0, sgn * WORLD_Z), Vector3(WORLD_X_MAX - WORLD_X_MIN, 400.0, 2.0), col, false)
 		_static_box(Vector3((WORLD_X_MAX + WORLD_X_MIN) * 0.5, 2.0, sgn * WORLD_Z), Vector3(WORLD_X_MAX - WORLD_X_MIN, 4.0, 2.0), col)
 
 func _tree(s: Vector3) -> void:
@@ -615,12 +641,19 @@ func reset_in_place() -> void:
 		p.linear_velocity = Vector3.ZERO
 		p.angular_velocity = Vector3.ZERO
 		p.global_transform = Transform3D(Basis.IDENTITY, p.get_meta("rest"))
+	unclaim_all()
 	for b in props:
+		b.set_meta("exploded", false)
+		b.visible = true
+		b.collision_layer = 4
+		b.freeze = false
 		b.linear_velocity = Vector3.ZERO
 		b.angular_velocity = Vector3.ZERO
 		b.global_transform = Transform3D(Basis.IDENTITY, b.get_meta("rest"))
+	for b in props:                     # second pass: moving neighbours would wake sleepers
 		b.sleeping = true
 	released_order.clear()
+	_restore_decor()
 
 # ------------------------------------------------------------ the deep city (60-200 m)
 func _reserve(x0: float, z0: float, x1: float, z1: float) -> void:
@@ -682,30 +715,57 @@ func _deep_city() -> void:
 	for w in [Vector3i(70, -14, 5), Vector3i(70, 12, 5), Vector3i(96, -6, 6), Vector3i(96, 2, 5)]:
 		_building(w.x, w.y, 1, w.z, 2, "deepwall%d_%d" % [w.x, w.y], true, false, -1)
 
-# decorative (non-breakable) city: ONE MultiMesh per mesh type + ONE static body of box shapes
+# The dense city: thousands of cottages/trees drawn with MultiMesh, each with its own static
+# collider. They look immovable but SMASH when the ragdoll hits them fast: the instance is hidden and
+# a puff of pooled debris flies (cheap destruction for the whole city).
+var _mm_walls: MultiMesh
+var _mm_roofs: MultiMesh
+var _mm_trees: MultiMesh
+var decor_bodies: Array[StaticBody3D] = []
+var _broken: Array[StaticBody3D] = []
+var debris: Array[RigidBody3D] = []
+var _debris_i: int = 0
+var decor_smashed: int = 0
+
 func _decor_cottage(x: float, z: float, yaw: float) -> void:
 	var bas := Basis(Vector3.UP, yaw)
 	var sc := Basis.from_scale(Vector3.ONE * S)
+	var w0: int = _decor_walls.size()
 	for i in 2:
 		var pos: Vector3 = Vector3(x, 0.0, z) + bas * Vector3((float(i) - 0.5) * S, 0.0, 0.0)
 		_decor_walls.append(Transform3D(bas * sc, pos))
 		_decor_roofs.append(Transform3D(bas * sc, pos + Vector3(0, S, 0)))
+	var b := StaticBody3D.new()
+	b.collision_layer = 1
+	b.collision_mask = 0
+	b.physics_material_override = _phys_stone
+	b.transform = Transform3D(bas, Vector3(x, S, z))
 	var cs := CollisionShape3D.new()
 	var sh := BoxShape3D.new()
 	sh.size = Vector3(2.0 * S, 2.0 * S, S)
 	cs.shape = sh
-	cs.transform = Transform3D(bas, Vector3(x, S, z))
-	_decor_body.add_child(cs)
+	b.add_child(cs)
+	b.set_meta("decor", decor_bodies.size())
+	b.set_meta("w0", w0)
+	add_child(b)
+	decor_bodies.append(b)
 
 func _decor_tree(x: float, z: float) -> void:
 	_decor_trees.append(Transform3D(Basis.from_scale(Vector3.ONE * 2.2), Vector3(x, 0, z)))
+	var b := StaticBody3D.new()
+	b.collision_layer = 1
+	b.collision_mask = 0
+	b.position = Vector3(x, 1.3, z)
 	var cs := CollisionShape3D.new()
 	var sh := CylinderShape3D.new()
 	sh.radius = 0.5
 	sh.height = 2.6
 	cs.shape = sh
-	cs.position = Vector3(x, 1.3, z)
-	_decor_body.add_child(cs)
+	b.add_child(cs)
+	b.set_meta("decor", decor_bodies.size())
+	b.set_meta("tree", _decor_trees.size() - 1)
+	add_child(b)
+	decor_bodies.append(b)
 
 func _mesh_of(model: String) -> Mesh:
 	var inst := _kit(model)
@@ -714,9 +774,9 @@ func _mesh_of(model: String) -> Mesh:
 	inst.free()
 	return mesh
 
-func _multimesh(mesh: Mesh, xfs: Array[Transform3D]) -> void:
+func _multimesh(mesh: Mesh, xfs: Array[Transform3D]) -> MultiMesh:
 	if xfs.is_empty():
-		return
+		return null
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.mesh = mesh
@@ -726,33 +786,236 @@ func _multimesh(mesh: Mesh, xfs: Array[Transform3D]) -> void:
 	var mmi := MultiMeshInstance3D.new()
 	mmi.multimesh = mm
 	add_child(mmi)
+	return mm
 
 func _decor_city() -> void:
-	_decor_body = StaticBody3D.new()
-	_decor_body.collision_layer = 1
-	_decor_body.collision_mask = 0
-	_decor_body.physics_material_override = _phys_stone
-	add_child(_decor_body)
+	# city blocks: 3x3 terraced cottages per block, alleys between blocks, a clear main street along z=0
+	var n := 0
+	var bx := 0
+	for x0 in range(8, 214, 17):
+		var bz := 0
+		for z0 in range(-128, 128, 17):
+			for i in 3:
+				for j in 3:
+					var x: float = float(x0) + float(i) * 4.7
+					var z: float = float(z0) + float(j) * 4.5
+					var h: int = (bx * 7 + bz * 13 + i * 5 + j * 11 + bx * bz) % 11
+					if absf(z) < 4.6 or _is_reserved(x, z, 2.2) or not _free(x, z, 2.4):
+						continue
+					if h <= 7:
+						_decor_cottage(x, z, 0.0)
+						n += 1
+					elif h == 8:
+						_decor_tree(x, z)
+			bz += 1
+		bx += 1
+	_mm_walls = _multimesh(_mesh_of("wall"), _decor_walls)
+	_mm_roofs = _multimesh(_mesh_of("roof"), _decor_roofs)
+	_mm_trees = _multimesh(_mesh_of("tree-large"), _decor_trees)
+	_make_debris_pool()
+
+func _make_debris_pool() -> void:
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.6, 0.45, 0.5)
+	bm.material = _mat(Color(0.58, 0.55, 0.5))
+	for i in 140:
+		var d := RigidBody3D.new()
+		d.collision_layer = 0
+		d.collision_mask = 1 | 4
+		d.mass = 0.8
+		d.freeze = true
+		d.visible = false
+		var cs := CollisionShape3D.new()
+		var sh := BoxShape3D.new()
+		sh.size = bm.size
+		cs.shape = sh
+		d.add_child(cs)
+		var mi := MeshInstance3D.new()
+		mi.mesh = bm
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		d.add_child(mi)
+		d.position = Vector3(0, -50, 0)
+		add_child(d)
+		debris.append(d)
+
+func _spawn_debris(pos: Vector3, vel: Vector3, n: int) -> void:
+	for i in n:
+		var d: RigidBody3D = debris[_debris_i]
+		_debris_i = (_debris_i + 1) % debris.size()
+		d.freeze = false
+		d.visible = true
+		d.collision_layer = 8
+		d.global_transform = Transform3D(Basis.from_euler(Vector3(randf() * TAU, randf() * TAU, randf() * TAU)), pos + Vector3(randf_range(-1.2, 1.2), randf_range(0.2, 2.2), randf_range(-1.2, 1.2)))
+		d.linear_velocity = vel * randf_range(0.35, 0.9) + Vector3(randf_range(-5, 5), randf_range(2, 9), randf_range(-5, 5))
+		d.angular_velocity = Vector3(randf_range(-9, 9), randf_range(-9, 9), randf_range(-9, 9))
+
+func _hide_instance(mm: MultiMesh, idx: int) -> void:
+	if mm:
+		mm.set_instance_transform(idx, Transform3D(Basis.from_scale(Vector3.ZERO), Vector3(0, -200, 0)))
+
+## The ragdoll hit a decorative building/tree hard: it bursts into debris. Returns true if it broke.
+func break_decor(b: StaticBody3D, dir: Vector3, speed: float) -> bool:
+	if b.collision_layer == 0:
+		return false
+	b.collision_layer = 0
+	_broken.append(b)
+	var at: Vector3 = b.global_position
+	if b.has_meta("tree"):
+		_hide_instance(_mm_trees, int(b.get_meta("tree")))
+		_spawn_debris(at, dir * speed * 0.5, 3)
+	else:
+		var w0: int = int(b.get_meta("w0"))
+		_hide_instance(_mm_walls, w0)
+		_hide_instance(_mm_walls, w0 + 1)
+		_hide_instance(_mm_roofs, w0)
+		_hide_instance(_mm_roofs, w0 + 1)
+		_spawn_debris(at, dir * speed * 0.6, 8)
+	decor_smashed += 1
+	return true
+
+func _restore_decor() -> void:
+	for b in _broken:
+		b.collision_layer = 1
+		if b.has_meta("tree"):
+			var ti: int = int(b.get_meta("tree"))
+			_mm_trees.set_instance_transform(ti, _decor_trees[ti])
+		else:
+			var w0: int = int(b.get_meta("w0"))
+			for k in 2:
+				_mm_walls.set_instance_transform(w0 + k, _decor_walls[w0 + k])
+				_mm_roofs.set_instance_transform(w0 + k, _decor_roofs[w0 + k])
+	_broken.clear()
+	decor_smashed = 0
+	for d in debris:
+		d.freeze = true
+		d.visible = false
+		d.collision_layer = 0
+		d.position = Vector3(0, -50, 0)
+
+func _free(x: float, z: float, r: float) -> bool:
+	for o in _occupied:
+		if (o as Vector2).distance_squared_to(Vector2(x, z)) < r * r:
+			return false
+	return true
+
+## Thick city: small breakable sheds and crate/barrel/TNT clutter everywhere the ragdoll is likely to land.
+func _dense_city() -> void:
 	var n := 0
 	var ix := 0
-	for xi in range(18, 214, 12):
+	for xi in range(14, 170, 9):
 		var iz := 0
-		for zi in range(-124, 125, 12):
-			var jitter := Vector2(float((ix * 7 + iz * 13) % 5) - 2.0, float((ix * 11 + iz * 5) % 5) - 2.0) * 1.2
-			var x: float = float(xi) + jitter.x
-			var z: float = float(zi) + jitter.y
+		for zi in range(-84, 85, 9):
+			var h: int = (ix * 17 + iz * 31 + ix * iz) % 10
 			iz += 1
-			if absf(z) < 6.0 and x > 0.0:                 # the main road stays clear
+			var x: float = float(xi) + float((ix * 5 + iz * 3) % 4) - 1.5
+			var z: float = float(zi) + float((ix * 3 + iz * 7) % 4) - 1.5
+			if _is_reserved(x, z, 2.5) or (absf(z) < 4.0):
 				continue
-			if _is_reserved(x, z, 3.0):
-				continue
-			var kind: int = (ix * 3 + iz * 5) % 7
-			if kind < 4:
-				_decor_cottage(x, z, (PI * 0.5) if (kind % 2 == 1) else 0.0)
+			if h < 5:
+				var tx: int = int(round(x / S))
+				var tz: int = int(round(z / S))
+				_building(tx, tz, 1, 1, 1, "shed%d" % n, h == 0, true, -1)
+				_occupied.append(Vector2(x, z))
 				n += 1
-			elif kind < 6:
-				_decor_tree(x, z)
 		ix += 1
-	_multimesh(_mesh_of("wall"), _decor_walls)
-	_multimesh(_mesh_of("roof"), _decor_roofs)
-	_multimesh(_mesh_of("tree-large"), _decor_trees)
+	# clutter (crates, barrels, red TNT barrels)
+	ix = 0
+	var tnt_n := 0
+	for xi in range(12, 190, 6):
+		var iz := 0
+		for zi in range(-90, 91, 6):
+			var h: int = (ix * 13 + iz * 7 + ix * iz * 3) % 10
+			iz += 1
+			var x: float = float(xi) + float((ix * 7 + iz) % 3) - 1.0
+			var z: float = float(zi) + float((ix + iz * 5) % 3) - 1.0
+			if _is_reserved(x, z, 1.5) or not _free(x, z, 2.2):
+				continue
+			if h <= 2:
+				_prop("detail-crate", Vector3(x, 0.001, z), Vector3(0.75, 0.75, 0.75), 1.6)
+				_prop("detail-crate", Vector3(x, 0.76, z), Vector3(0.75, 0.75, 0.75), 1.6)
+				_occupied.append(Vector2(x, z))
+			elif h <= 5:
+				_prop("detail-barrel", Vector3(x, 0.0, z), Vector3(0.62, 0.75, 0.62), 2.0)
+				_occupied.append(Vector2(x, z))
+			elif (h == 6 or h == 7) and tnt_n < 44:
+				_tnt_barrel(x, z)
+				tnt_n += 1
+				_occupied.append(Vector2(x, z))
+		ix += 1
+
+## Target claimed this attempt: dim its beam and label.
+func claim(key: String) -> void:
+	if _beams.has(key):
+		var bl: Array = _beams[key]
+		(bl[0] as MeshInstance3D).visible = false
+		(bl[1] as Label3D).modulate.a = 0.3
+
+func unclaim_all() -> void:
+	for k in _beams.keys():
+		var bl: Array = _beams[k]
+		(bl[0] as MeshInstance3D).visible = true
+		(bl[1] as Label3D).modulate.a = 1.0
+
+# ------------------------------------------------------------------- mayhem
+func _tnt_barrel(x: float, z: float) -> void:
+	var b := _prop("detail-barrel", Vector3(x, 0.0, z), Vector3(0.62, 0.75, 0.62), 2.0)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.85, 0.08, 0.05)
+	mat.emission_enabled = true
+	mat.emission = Color(1.0, 0.15, 0.05)
+	mat.emission_energy_multiplier = 0.6
+	for mi in b.find_children("*", "MeshInstance3D", true, false):
+		(mi as MeshInstance3D).material_override = mat
+	b.set_meta("explosive", true)
+	tnt.append(b)
+
+## Boom: shoves released pieces/props, releases frozen pieces in range, chains into other TNT.
+## Returns {released: Array[RigidBody3D], blasts: Array[Vector3]} (all blast centres incl. chains).
+func explode(center: Vector3, radius: float, power: float) -> Dictionary:
+	var released: Array[RigidBody3D] = []
+	var blasts: Array[Vector3] = []
+	var queue: Array[Vector3] = [center]
+	var guard := 0
+	while not queue.is_empty() and guard < 24:
+		guard += 1
+		var c: Vector3 = queue.pop_front()
+		blasts.append(c)
+		for p in pieces:
+			if p.get_meta("capped", false):
+				continue
+			var d: float = p.global_position.distance_to(c)
+			if d > radius:
+				continue
+			var dir: Vector3 = ((p.global_position - c) + Vector3(0, 0.6 * radius * 0.2, 0)).normalized()
+			var f: float = 1.0 - d / radius
+			if p.freeze:
+				release(p, dir * power * (0.35 + 0.65 * f) + Vector3(0, 4.0, 0))
+				released.append(p)
+			else:
+				p.apply_central_impulse(dir * power * 0.4 * f * p.mass)
+		for b in props:
+			if not is_instance_valid(b) or not b.visible:
+				continue
+			var d2: float = b.global_position.distance_to(c)
+			if d2 > radius or d2 < 0.01:
+				continue
+			var dir2: Vector3 = ((b.global_position - c) + Vector3(0, 1.0, 0)).normalized()
+			b.sleeping = false
+			b.apply_central_impulse(dir2 * power * 0.5 * (1.0 - d2 / radius) * b.mass)
+			if b.get_meta("explosive", false) and not b.get_meta("exploded", false):
+				b.set_meta("exploded", true)
+				b.visible = false
+				b.collision_layer = 0
+				b.freeze = true
+				queue.append(b.global_position)
+	return {"released": released, "blasts": blasts}
+
+## Barrel the ragdoll just hit: detonate it (and its chain).
+func detonate(b: RigidBody3D) -> Dictionary:
+	if b.get_meta("exploded", false):
+		return {"released": [], "blasts": []}
+	b.set_meta("exploded", true)
+	b.visible = false
+	b.collision_layer = 0
+	b.freeze = true
+	return explode(b.global_position, 9.0, 22.0)

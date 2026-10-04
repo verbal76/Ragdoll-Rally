@@ -1,0 +1,28 @@
+{
+  "repo": "verbal76/Ragdoll-Rally",
+  "product": "Ragdoll Rally Launch",
+  "file_stem": "Ragdoll-Rally-Launch",
+  "current": {
+    "release_tag": "rr-launch-b15",
+    "new_tag": "v11",
+    "version": 11,
+    "commit": "cac2e291732485d879f93d2e8e336b71912a4172",
+    "apk_asset_id": 608866419,
+    "apk_expected_sha256": "ff3ff8c10bdf9f3f1da6bb66602715e447e3e79ce3c17f758d30e8238b69dca1",
+    "report_asset_id": 608866418,
+    "version_code": 15,
+    "ci_run": 15
+  },
+  "history": [
+    {"tag": "launch-poc-b1", "version": 1},
+    {"tag": "launch-poc-b2", "version": 2},
+    {"tag": "launch-poc-b4", "version": 3},
+    {"tag": "launch-poc-b5", "version": 4},
+    {"tag": "launch-poc-b6", "version": 5},
+    {"tag": "launch-g2-b7", "version": 6},
+    {"tag": "launch-g2x-b8", "version": 7},
+    {"tag": "launch-g2x-b9", "version": 8},
+    {"tag": "launch-g2m-b11", "version": 9},
+    {"tag": "launch-g2m-b12", "version": 10}
+  ]
+}

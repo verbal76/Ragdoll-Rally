@@ -1,0 +1,22 @@
+name: Release retrofit (one-off)
+
+# Runs when release/retrofit_request.json changes. Idempotent. Re-presents already-built, verified binaries under the
+# public "<Product> v<N>" convention WITHOUT rebuilding them (see docs/RELEASES.md).
+on:
+  push:
+    paths:
+      - 'release/retrofit_request.json'
+      - 'release/retrofit.py'
+
+permissions:
+  contents: write
+
+jobs:
+  retrofit:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrofit releases
+        run: python3 release/retrofit.py

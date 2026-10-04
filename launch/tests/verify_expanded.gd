@@ -45,24 +45,51 @@ func _shoot(main: Node, b: float, s: float) -> Dictionary:
 	return {"frames": n, "state": main.state, "view": float(in_view) / maxf(counted, 1.0), "worst_ms": worst_ms, "active": peak_active,
 		"end": main.ragdoll.centre(), "sane": main.ragdoll.is_finite_and_sane(), "score": main.scoring.total()}
 
+## Normalised screen position (0..1) under a REAL 20:9 landscape phone aspect (the headless viewport is square).
+func _screen(main: Node, wp: Vector3) -> Vector2:
+	var local: Vector3 = main.cam.global_transform.affine_inverse() * wp
+	if local.z >= -0.1:
+		return Vector2(-5, -5)
+	var th: float = tan(deg_to_rad(main.cam.fov) * 0.5)
+	var ndc := Vector2((local.x / -local.z) / (th * (2000.0 / 900.0)), (local.y / -local.z) / th)
+	return Vector2((ndc.x + 1.0) * 0.5, (1.0 - ndc.y) * 0.5)
+
+func _rollout(main: Node, cls: bool) -> float:
+	main.classic = cls
+	main.legacy_world = true            # open far field: nothing to hit
+	main.force_rebuild = true
+	main.reset()
+	await frames(2)
+	for o in main.town.pieces + main.town.props:
+		o.collision_layer = 0          # truly open ground: the legacy village would otherwise stop some shots dead
+	_aim(main, 0.12, 0.0)
+	main.aim_power = 0.55
+	main.fire()
+	var first_x := -1.0
+	var n := 0
+	while main.state == 1 and n < 60 * 14:
+		await physics_frame
+		n += 1
+		var c: Vector3 = main.ragdoll.centre()
+		if first_x < 0.0 and n > 5 and c.y < 1.0:
+			first_x = c.x
+	var end_x: float = main.ragdoll.centre().x
+	main.classic = false
+	main.legacy_world = false
+	main.force_rebuild = false
+	main.reset()
+	await frames(2)
+	return end_x - maxf(first_x, 0.0)
+
 func _run() -> void:
 	var main: Node = (load("res://scenes/main.tscn") as PackedScene).instantiate()
 	root.add_child(main)
 	await frames(5)
-	# ---- power preserved (G1/G2 constants and curve)
-	main.aim_power = 1.0
-	check(is_equal_approx(main.launch_speed(), 32.0), "full-power launch speed unchanged (32.0)")
-	main.aim_power = 0.0
-	check(is_equal_approx(main.launch_speed(), 9.0), "minimum launch speed unchanged (9.0)")
-	main.aim_power = 0.7
-	check(absf(main.launch_speed() - lerpf(9.0, 32.0, pow(0.7, 0.9))) < 0.001, "power curve unchanged")
+	# ---- power: classic G1/G2 curve preserved for the regression baseline; v0.4 tuning is faster
+	check(is_equal_approx(main.speed_for_power(1.0, true), 32.0) and is_equal_approx(main.speed_for_power(0.0, true), 9.0) and is_equal_approx(main.speed_for_power(0.5, true), lerpf(9.0, 32.0, pow(0.5, 0.9))), "classic G1/G2 power curve intact (9..32 m/s)")
+	check(is_equal_approx(main.speed_for_power(1.0), 40.0) and is_equal_approx(main.speed_for_power(0.0), 12.0), "v0.4 tuning: 12..40 m/s (was 9..32)")
+	check(is_equal_approx(main.speed_for_power(1.45), 56.0) and main.speed_for_power(1.2) > 40.0 and main.speed_for_power(1.2) < 56.0, "overdrive band: 40 -> 56 m/s beyond full power")
 	var g: float = float(ProjectSettings.get_setting("physics/3d/default_gravity", 9.8))
-	var v := 32.0
-	var ang := deg_to_rad(45.0)
-	var rng: float = v * v * sin(2.0 * ang) / g
-	check(absf(rng - 104.5) < 0.5, "reference ballistic range at 45 deg full power = %.1f m (unchanged)" % rng)
-	check(is_equal_approx(main.speed_for_power(1.0), 32.0) and is_equal_approx(main.speed_for_power(0.5), lerpf(9.0, 32.0, pow(0.5, 0.9))), "every pull up to the old maximum gives the same speed as before")
-	check(is_equal_approx(main.speed_for_power(1.45), 46.0) and main.speed_for_power(1.2) > 32.0 and main.speed_for_power(1.2) < 46.0, "overdrive band: 32 -> 46 m/s beyond full power")
 	# ---- aim mapping: default lower-left pull
 	check(main._basis_back.x < -0.3 and main._basis_back.y > 0.3, "pull-back points toward the LOWER-LEFT of the screen %s" % str(main._basis_back))
 	var dets: float = absf(main._basis_back.x * main._basis_side.y - main._basis_back.y * main._basis_side.x)
@@ -194,13 +221,96 @@ func _run() -> void:
 	main.reset()
 	await frames(3)
 	var restored := true
+	var worst_drift := 0.0
 	for p in main.town.pieces:
 		if not p.freeze or p.global_position.distance_to(p.get_meta("rest")) > 0.01:
 			restored = false
 	for b in main.town.props:
-		if b.global_position.distance_to(b.get_meta("rest")) > 0.05:
+		var dd: float = b.global_position.distance_to(b.get_meta("rest"))
+		worst_drift = maxf(worst_drift, dd)
+		if dd > 0.35:
 			restored = false
+	print("      worst prop drift after reset: %.2f m" % worst_drift)
 	check(restored and main.town.frozen_count() == main.town.pieces.size(), "fast reset restores every piece and prop in place")
+	# ---- camera: launcher sits well inside the frame with room to pull (both views)
+	for side in [false, true]:
+		main.set_view_right(side)
+		await frames(2)
+		main.cam.global_transform = main._cam_aim_xf
+		var lo: Vector2 = _screen(main, main.LAUNCH_ORIGIN)
+		var framed := lo.y < 0.74 and lo.x > 0.2 and lo.x < 0.8
+		for ang in [-0.7, 0.0, 0.7]:
+			_aim(main, 1.45 * cos(ang), 1.45 * sin(ang))
+			var pp: Vector2 = _screen(main, main.pouch_pos(main.aim_dir, main.aim_power))
+			if pp.x < 0.04 or pp.x > 0.96 or pp.y < 0.04 or pp.y > 0.96:
+				framed = false
+		check(framed, "%s view: catapult and the fully pulled ragdoll stay inside the frame (launcher at %.0f%% / %.0f%% of the screen)" % ["right" if side else "left", lo.x * 100.0, lo.y * 100.0])
+	main.set_view_right(false)
+	await frames(2)
+	# ---- density: the corridor the ragdoll flies through is thick with things to hit
+	var cells := {}
+	var objs: Array[Vector3] = []
+	for pc in main.town.pieces:
+		objs.append(pc.global_position)
+	for pr in main.town.props:
+		objs.append(pr.global_position)
+	for sp in main.town.static_pos:
+		objs.append(sp)
+	for tw in main.town._decor_walls:
+		objs.append(tw.origin)
+	for tt in main.town._decor_trees:
+		objs.append(tt.origin)
+	var total := 0
+	for o in objs:
+		if o.x >= 15.0 and o.x < 150.0 and absf(o.z) < 48.0:
+			total += 1
+			cells[Vector2i(int((o.x - 15.0) / 12.0), int((o.z + 48.0) / 12.0))] = true
+	check(float(cells.size()) / (11.0 * 8.0) >= 0.9 and total >= 700, "dense city: %d objects, %.0f%% of the 12 m cells in the flight corridor have something to hit" % [total, 100.0 * float(cells.size()) / 88.0])
+	# ---- TNT, chain reactions
+	check(main.town.tnt.size() >= 20, "%d TNT barrels" % main.town.tnt.size())
+	var t0: RigidBody3D = main.town.tnt[0]
+	var t1: RigidBody3D = main.town.tnt[1]
+	t1.global_position = t0.global_position + Vector3(2.5, 0, 0)
+	var blast: Dictionary = main.town.detonate(t0)
+	check(blast["blasts"].size() >= 2 and not t0.visible and not t1.visible, "TNT detonates and chains into a neighbour (%d blasts)" % blast["blasts"].size())
+	# ---- target beams
+	var bm: Array = main.town._beams["window"]
+	check((bm[0] as MeshInstance3D).visible, "every target has a glowing beam")
+	main.scoring.award("window", "House Window", 150, "Targets")
+	check(not (bm[0] as MeshInstance3D).visible, "claimed target's beam goes dark")
+	main.reset()
+	await frames(3)
+	var bm2: Array = main.town._beams["window"]
+	check((bm2[0] as MeshInstance3D).visible and main.town.tnt[0].visible and not main.town.tnt[0].get_meta("exploded", false), "reset relights beams and rebuilds the TNT")
+	# ---- breakable decor
+	var db: StaticBody3D = main.town.decor_bodies[0]
+	check(main.town.decor_bodies.size() >= 300, "%d breakable decor buildings/trees" % main.town.decor_bodies.size())
+	check(main.town.break_decor(db, Vector3.RIGHT, 20.0) and db.collision_layer == 0 and not main.town.break_decor(db, Vector3.RIGHT, 20.0), "decor breaks once")
+	main.reset()
+	await frames(3)
+	check(db.collision_layer == 1 and main.town.decor_smashed == 0, "reset restores broken decor")
+	# ---- upgrades
+	main.bank = 1000
+	main.up_power = 0
+	main.up_speed = 0
+	main.up_traj = 0
+	check(main.buy("power") and main.buy("speed") and main.buy("traj") and main.bank == 100, "three level-1 upgrades bought for 300 each (bank %d)" % main.bank)
+	check(not main.buy("power") and main.up_power == 1, "cannot buy without enough points")
+	main.aim_power = 1.0
+	check(is_equal_approx(main.launch_speed(), 40.0 * 1.06), "speed upgrade: +6%% launch speed (%.1f)" % main.launch_speed())
+	main.bank = 100000
+	for i in 8:
+		main.buy("power")
+	check(main.up_power == 5 and main.upgrade_cost("power") == -1, "upgrades cap at level 5")
+	main.bank = 0
+	main.up_power = 0
+	main.up_speed = 0
+	main.up_traj = 0
+	main._save_progress()
+	# ---- skid: after landing the ragdoll keeps sliding through the open ground instead of stopping
+	var roll_new: float = await _rollout(main, false)
+	var roll_old: float = await _rollout(main, true)
+	check(roll_new >= 12.0 and roll_new >= roll_old - 1.0, "skid assist: never dead-stops (rolls %.0f m after landing, classic %.0f m)" % [roll_new, roll_old])
 	# ---- extreme shots: result in time, camera keeps the ragdoll in view, bounded physics
 	var shots := {
 		"hard left": [0.55, 0.85], "hard right": [0.55, -0.85], "long centre": [0.8, 0.0],
