@@ -1,0 +1,145 @@
+name: Android Launch POC
+
+on:
+  push:
+    branches: [ccr-7c0d7291-e3d5o1]
+    paths:
+      - 'launch/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GODOT_VERSION: 4.4.1
+  GODOT_BASE: https://github.com/godotengine/godot/releases/download/4.4.1-stable
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cache Godot downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/godot-dl
+          key: godot-4.4.1-dl-v1
+
+      - name: Download Godot and export templates
+        run: |
+          mkdir -p ~/godot-dl
+          cd ~/godot-dl
+          [ -f godot.zip ] || curl -fsSL -o godot.zip "$GODOT_BASE/Godot_v4.4.1-stable_linux.x86_64.zip"
+          [ -f templates.tpz ] || curl -fsSL -o templates.tpz "$GODOT_BASE/Godot_v4.4.1-stable_export_templates.tpz"
+          unzip -o -q godot.zip
+          sudo install -m 755 Godot_v4.4.1-stable_linux.x86_64 /usr/local/bin/godot
+          T=~/.local/share/godot/export_templates/4.4.1.stable
+          mkdir -p "$T"
+          unzip -o -j -q templates.tpz 'templates/android_*' 'templates/version.txt' -d "$T" || unzip -o -j -q templates.tpz 'templates/android*' 'templates/version.txt' -d "$T"
+          ls -la "$T"
+
+      - name: Android SDK packages
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platform-tools" "build-tools;35.0.1" "platforms;android-35" "cmdline-tools;latest" > /dev/null
+          ls "$ANDROID_HOME/build-tools" "$ANDROID_HOME/platforms"
+
+      - name: Godot editor settings
+        run: |
+          mkdir -p ~/.config/godot
+          cat > ~/.config/godot/editor_settings-4.4.tres <<EOS
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          export/android/debug_keystore = "$GITHUB_WORKSPACE/launch/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          export/android/force_system_user = false
+          export/android/shutdown_adb_on_exit = true
+          EOS
+          sed -i 's/^          //' ~/.config/godot/editor_settings-4.4.tres || true
+          cat ~/.config/godot/editor_settings-4.4.tres
+
+      - name: Set version
+        run: |
+          sed -i "s/^version\/code=.*/version\/code=${{ github.run_number }}/; s/^version\/name=.*/version\/name=\"0.1.1-poc-infra\"/" launch/export_presets.cfg
+          grep -E '^version/' launch/export_presets.cfg
+
+      - name: Write build identity (build_info.json)
+        run: |
+          T=~/.local/share/godot/export_templates/4.4.1.stable
+          AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt | tail -1)
+          BADGING=$("$AAPT" dump badging "$T/android_debug.apk")
+          TARGET=$(echo "$BADGING" | sed -n "s/.*targetSdkVersion:'\([0-9]*\)'.*/\1/p" | head -1)
+          MIN=$(echo "$BADGING" | sed -n "s/.*sdkVersion:'\([0-9]*\)'.*/\1/p" | head -1)
+          echo "template targetSdk=$TARGET minSdk=$MIN"
+          python3 launch/tools/ota_tools.py build-info --out launch/build_info.json \
+            --version-name 0.1.1-poc-infra --version-code ${{ github.run_number }} --sha "$GITHUB_SHA" \
+            --run ${{ github.run_number }} --channel poc --target-sdk "$TARGET" --min-sdk "$MIN" \
+            --manifest-url "https://github.com/${{ github.repository }}/releases/download/launch-ota-channel-poc/manifest.json" \
+            --signing "debug (throwaway key; not Play-ready)" --build-type debug
+          cat launch/build_info.json
+
+      - name: Import project
+        run: godot --headless --path launch --import || true
+
+      - name: Verify (game)
+        run: godot --headless --path launch -s tests/verify.gd
+
+      - name: Verify (OTA / About / applying-update state machine)
+        run: godot --headless --path launch -s tests/verify_ota.gd
+
+      - name: Export APK
+        id: export
+        run: |
+          SHA7=$(echo "$GITHUB_SHA" | cut -c1-7)
+          APK="ragdoll-rally-launch-${SHA7}-b${{ github.run_number }}.apk"
+          mkdir -p build
+          godot --headless --path launch --export-debug "Android" "../build/$APK"
+          ls -la build
+          test -s "build/$APK"
+          echo "apk=build/$APK" >> "$GITHUB_OUTPUT"
+          echo "name=$APK" >> "$GITHUB_OUTPUT"
+
+      - name: Verify APK identity
+        run: |
+          AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt | tail -1)
+          B=$("$AAPT" dump badging "${{ steps.export.outputs.apk }}")
+          echo "$B" | grep -E "^package:|targetSdkVersion|sdkVersion|uses-permission"
+          echo "$B" | grep -q "name='com.hotatticgames.ragdollrally.launch'"
+          echo "$B" | grep -q "versionName='0.1.1-poc-infra'"
+          echo "$B" | grep -q "versionCode='${{ github.run_number }}'"
+          echo "$B" | grep -q "android.permission.INTERNET"
+          unzip -l "${{ steps.export.outputs.apk }}" | grep -q "assets/build_info.json"
+          ls -l "${{ steps.export.outputs.apk }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.export.outputs.name }}
+          path: ${{ steps.export.outputs.apk }}
+
+      - name: Publish prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: launch-poc-b${{ github.run_number }}
+          name: 'Launch POC b${{ github.run_number }} (infra - About + OTA client, playfield unchanged)'
+          prerelease: true
+          target_commitish: ${{ github.sha }}
+          body: |
+            Debug-signed arm64 APK (Ragdoll Rally Launch POC) - infrastructure build:
+            Settings -> About (+ Copy Diagnostics), self-discovering OTA client (channel poc), studio-splash support.
+            The playfield/gameplay is the same as b2. NOT Google Play ready (debug-signed, targetSdk 34).
+            Commit: ${{ github.sha }}
+          files: ${{ steps.export.outputs.apk }}

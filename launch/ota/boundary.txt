@@ -1,0 +1,12 @@
+# Files baked into the native build. Any change here changes the runtime_compat
+# fingerprint, so an OTA built from such a source is REJECTED by older native builds.
+# OTA-safe payload = everything else under launch/ that ships in the game
+# (scripts/*.gd except the ones listed, scenes/main.tscn, assets/**).
+project.godot
+icon.svg
+ota/boundary.txt
+scenes/boot.tscn
+scripts/boot.gd
+scripts/ota_client.gd
+scripts/build_info.gd
+scripts/update_overlay.gd
