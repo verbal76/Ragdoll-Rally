@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://vbtvchexs6cu"
-path="res://.godot/imported/Hot_Attic_Games_Master_Logo.png-827125dc8d3dd33a19dd2f55589c8ebb.ctex"
+uid="uid://va183jfibhrg"
+path="res://.godot/imported/Hot_Attic_Games_Master_Logo_ALPHA_FINAL.png-10f9d86bbfab1179a95655621a8b3e8f.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://branding/Hot_Attic_Games_Master_Logo.png"
-dest_files=["res://.godot/imported/Hot_Attic_Games_Master_Logo.png-827125dc8d3dd33a19dd2f55589c8ebb.ctex"]
+source_file="res://branding/Hot_Attic_Games_Master_Logo_ALPHA_FINAL.png"
+dest_files=["res://.godot/imported/Hot_Attic_Games_Master_Logo_ALPHA_FINAL.png-10f9d86bbfab1179a95655621a8b3e8f.ctex"]
 
 [params]
 
