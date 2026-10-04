@@ -2,7 +2,7 @@
 
 The ragdoll is the game; the city is the playground. Fun overrides realism.
 
-Rollback points: tag `launch-g2x-b9` (b9, `db4534e`) and `rr-checkpoint-b15` (the build before the pivot, `cac2e29`). Nothing was rewritten.
+Rollback points: release v8 (tag `launch-g2x-b9`, the b9 checkpoint, `db4534e`) and release v11 (tag `v11`, the build before the pivot, `cac2e29`). Nothing was rewritten.
 
 ## Where things live
 | File | What |

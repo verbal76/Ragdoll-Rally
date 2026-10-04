@@ -2,6 +2,16 @@
   "product": "Ragdoll Rally Launch",
   "file_stem": "Ragdoll-Rally-Launch",
   "version": 12,
-  "deliver": false,
-  "notes": []
+  "deliver": true,
+  "notes": [
+    "NEW GAMEPLAY: this is the fun-first rebuild of how a throw plays (v11 and earlier play like the old game).",
+    "New start screen: choose from 18 ragdolls (Ragnar + 17 others, each with its own stats and play style), then choose a city. Swipe or use the arrows.",
+    "Faster, flatter launch; limbs flail and he flips. Swipe left/right while airborne to add spin.",
+    "Pebble-skipping physics: he skips, bounces and ricochets off walls, roofs and signs instead of rolling to a stop; throws end quickly when the action is over.",
+    "Limbs can come off (and keep flying, bouncing, burning); cartoon blood (Settings > Gore ON/OFF).",
+    "Glass shatters, timber burns and fire spreads, TNT chains, different sounds for wood / glass / stone / metal.",
+    "8 stacking upgrades: launch power, bounce, ricochet, spin, durability, destruction, explosive impact, ignition. The upgrades screen has a +10,000 TEST button so you can try combinations at once.",
+    "New RAGDOLL TEST YARD map; the old big city is still selectable. Downtown, Old Town, Suburbia, Industrial District and Resort Strip are listed but locked (not built yet).",
+    "Hot Attic Games studio splash on startup."
+  ]
 }
