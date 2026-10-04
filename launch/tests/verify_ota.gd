@@ -207,7 +207,10 @@ func _run() -> void:
 	check(r.status == "disabled" and c7.update_status() == "DISABLED", "OTA disabled build performs no check")
 	# --- About content
 	var t2 := SettingsMenu.diagnostics_text(c7)
-	for needle in ["APPLICATION", "DEVICE", "INSTALL", "Package: com.hotatticgames.ragdollrally.launch", "Version code (native build)", "OTA", "Channel", "GOOGLE PLAY / ANDROID", "Play API compliant: NO", "Captured:"]:
+	for needle in ["APPLICATION", "DEVICE", "INSTALL", "Package: com.hotatticgames.ragdollrally.launch", "Version code (native build)", "OTA", "Channel", "GOOGLE PLAY / ANDROID", "Play API compliant: NO", "Captured:",
+			"Product: Ragdoll Rally Launch", "  Version: ", "Android versionName:", "Source commit:"]:
 		check(needle in t2, "diagnostics contains '%s'" % needle)
+	# the public version is shown on its own line in APPLICATION (before the technical INSTALL block)
+	check(t2.find("  Version: ") > t2.find("APPLICATION") and t2.find("  Version: ") < t2.find("INSTALL"), "public product version is shown at the top, ahead of technical metadata")
 	check(not ("password" in t2.to_lower() or "token" in t2.to_lower() or "keystore" in t2.to_lower()), "diagnostics contain no secrets")
 	check(BuildInfo.play_compliance({"target_sdk": "36", "play_required_target_api": 36}) == "YES" and BuildInfo.play_compliance({"target_sdk": "?", "play_required_target_api": 36}) == "UNVERIFIED", "play compliance logic")

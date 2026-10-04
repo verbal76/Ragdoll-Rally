@@ -140,14 +140,16 @@ static func diagnostics_text(ota: Node) -> String:
 	var L: Array[String] = []
 	L.append("HOT ATTIC GAMES — DIAGNOSTICS")
 	L.append("APPLICATION")
-	L.append("  Name: %s" % str(info.get("app_name")))
+	L.append("  Product: %s" % str(info.get("product_name", info.get("app_name"))))
+	L.append("  Version: %s" % str(info.get("public_version", info.get("version_name"))))
+	L.append("  Android app label: %s" % str(info.get("app_name")))
 	L.append("DEVICE")
 	for s in BuildInfo.device_lines():
 		L.append("  " + s)
 	L.append("  Captured: %s" % Time.get_datetime_string_from_system(true))
 	L.append("INSTALL")
 	L.append("  Package: %s" % str(info.get("package_id")))
-	L.append("  Version: %s" % str(info.get("version_name")))
+	L.append("  Android versionName: %s" % str(info.get("version_name")))
 	L.append("  Version code (native build): %s" % _n(info.get("version_code")))
 	L.append("  Native/runtime: Godot %s ; runtime-compat %s ; native generation %s" % [Engine.get_version_info().get("string", "?"), str(info.get("runtime_compat")), str(info.get("generation", "?"))])
 	L.append("  Source commit: %s" % str(info.get("source_sha")))

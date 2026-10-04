@@ -8,6 +8,9 @@ const PATH := "res://build_info.json"
 static func defaults() -> Dictionary:
 	return {
 		"app_name": "RR Launch",
+		"product_name": "Ragdoll Rally Launch",
+		"public_version": "dev",
+		"build_kind": "dev",
 		"package_id": "com.hotatticgames.ragdollrally.launch",
 		"version_name": "dev",
 		"version_code": 0,
