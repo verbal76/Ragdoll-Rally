@@ -8,6 +8,6 @@ Two separate apps. User-facing names are only **RR Launch** and **RR Legacy**.
 | RR Legacy | RR Legacy | (own package, to be set when built) | `legacy/branding/RR_Legacy_*` | NOT BUILT: the original game's source is not in this repository |
 
 Masters (full-size, from the owner): `branding/RR_Launch_Icon.png`, `branding/RR_Legacy_Icon.png`.
-Per-app derived sizes: main 192x192, adaptive foreground/background 432x432, 512x512.
+Per-app derived sizes: main 192x192, adaptive foreground 432x432 (art on transparent), adaptive background 432x432 (fully transparent: no colour block behind the art), 512x512.
 
 Releases are named `RR Launch (build N)`, tag `rr-launch-bN`, file `RR-Launch-bN-<commit>.apk`.
