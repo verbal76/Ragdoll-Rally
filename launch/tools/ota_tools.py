@@ -51,7 +51,7 @@ def main():
         print(fingerprint())
     elif a.cmd == "build-info":
         info = {
-            "app_name": "Ragdoll Rally Launch", "package_id": "com.hotatticgames.ragdollrally.launch",
+            "app_name": "RR Launch", "package_id": "com.hotatticgames.ragdollrally.launch",
             "version_name": a.version_name, "version_code": int(a.version_code or 0), "source_sha": a.sha,
             "run_number": int(a.run or 0), "build_type": a.build_type or "debug", "channel": a.channel or "poc",
             "min_sdk": a.min_sdk or "unknown", "target_sdk": a.target_sdk or "unknown",

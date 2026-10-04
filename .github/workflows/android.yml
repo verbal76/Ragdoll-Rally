@@ -85,7 +85,7 @@ jobs:
 
       - name: Set version
         run: |
-          sed -i "s/^version\/code=.*/version\/code=${{ github.run_number }}/; s/^version\/name=.*/version\/name=\"0.4.0-poc-mayhem\"/" launch/export_presets.cfg
+          sed -i "s/^version\/code=.*/version\/code=${{ github.run_number }}/; s/^version\/name=.*/version\/name=\"0.4.0\"/" launch/export_presets.cfg
           grep -E '^version/|gradle_build/' launch/export_presets.cfg
 
       - name: Write build identity (build_info.json)
@@ -97,9 +97,9 @@ jobs:
           echo "template targetSdk=$TARGET minSdk=$MIN compileSdk=$COMPILE"
           test "$TARGET" = "36"
           python3 launch/tools/ota_tools.py build-info --out launch/build_info.json \
-            --version-name 0.4.0-poc-mayhem --version-code ${{ github.run_number }} --sha "$GITHUB_SHA" \
+            --version-name 0.4.0 --version-code ${{ github.run_number }} --sha "$GITHUB_SHA" \
             --run ${{ github.run_number }} --channel poc-g2 --target-sdk "$TARGET" --min-sdk "$MIN" --compile-sdk "$COMPILE" \
-            --generation "g2 (Godot 4.7.1, Gradle build, API 36)" \
+            --generation "Godot 4.7.1, Gradle build, Android API 36" \
             --manifest-url "https://github.com/${{ github.repository }}/releases/download/launch-ota-channel-poc-g2/manifest.json" \
             --signing "debug (throwaway key; not Play-ready)" --build-type debug
           cat launch/build_info.json
@@ -125,7 +125,7 @@ jobs:
         id: export
         run: |
           SHA7=$(echo "$GITHUB_SHA" | cut -c1-7)
-          APK="ragdoll-rally-launch-g2-expanded-${SHA7}-b${{ github.run_number }}.apk"
+          APK="RR-Launch-b${{ github.run_number }}-${SHA7}.apk"
           mkdir -p build
           godot --headless --path launch --export-debug "Android" "../build/$APK"
           ls -la build
@@ -136,7 +136,7 @@ jobs:
       - name: Verify APK artifact (identity, SDK, signing, native libs, 16 KB)
         run: |
           python3 launch/tools/verify_apk.py "${{ steps.export.outputs.apk }}" \
-            --package com.hotatticgames.ragdollrally.launch --version-name 0.4.0-poc-mayhem \
+            --package com.hotatticgames.ragdollrally.launch --version-name 0.4.0 \
             --version-code ${{ github.run_number }} --min-sdk 24 --target-sdk 36 \
             --cert-sha256 "$SIGNING_CERT_SHA256" --json-out build/apk_report.json | tee build/apk_report.txt
           python3 - <<'PY'
@@ -156,14 +156,12 @@ jobs:
       - name: Publish prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: launch-g2m-b${{ github.run_number }}
-          name: 'Launch G2 Expanded Playfield (b${{ github.run_number }})'
+          tag_name: rr-launch-b${{ github.run_number }}
+          name: 'RR Launch (build ${{ github.run_number }})'
           prerelease: true
           target_commitish: ${{ github.sha }}
           body: |
-            Launch G2 + EXPANDED PLAYFIELD: three-quarter opening camera (pull back toward the lower-left corner), ~150 m wide/deep field
-            with 13 valued targets across left/center/right and near/far, camera that follows any direction, faster end-of-flight and tap-to-skip.
-            Slingshot power/curve unchanged. Native generation G2 (Godot 4.7.1, API 36, 16 KB-verified in CI). Same package/signing as b2..b7.
+            RR Launch, build ${{ github.run_number }} (debug-signed arm64 APK, same app/package as earlier RR Launch builds, installs over them).
             Commit: ${{ github.sha }}
           files: |
             ${{ steps.export.outputs.apk }}
