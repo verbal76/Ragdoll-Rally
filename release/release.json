@@ -1,13 +1,7 @@
 {
   "product": "Ragdoll Rally Launch",
   "file_stem": "Ragdoll-Rally-Launch",
-  "version": 13,
-  "deliver": true,
-  "notes": [
-    "Launches can no longer shoot almost straight up: the upward angle is soft-limited, with loft and long throws kept.",
-    "The invisible world edge no longer blows you up - touching it just ends the run cleanly.",
-    "Slower, fairer upgrades: score is still big, but banked upgrade credits are separate (about 20-30 good runs to max everything).",
-    "Skip chains no longer inflate wildly; the +10,000 (TEST) button is gone.",
-    "Five new cities: Downtown, Old Town, Suburbia, Industrial District and Resort Strip, plus the Grand Fortress and the Test Yard (training)."
-  ]
+  "version": 14,
+  "deliver": false,
+  "notes": []
 }

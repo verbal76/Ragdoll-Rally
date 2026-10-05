@@ -268,7 +268,7 @@ func _refresh() -> void:
 	_env_name.text = str(e["name"]) + (("   [%s]" % str(e["tag"])) if str(e.get("tag", "")) != "" else "")
 	_env_desc.text = str(e["desc"])
 	var ok: bool = bool(e["playable"])
-	_env_state.text = "" if ok else "LOCKED - not built yet"
+	_env_state.text = ""
 	_go.disabled = not ok
 	if page == 0:
 		_load_model(str(c["letter"]))

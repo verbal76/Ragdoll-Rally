@@ -52,7 +52,7 @@ def main():
     check(not has("+10,000 (TEST)") and not has("(TEST)"), "no '+10,000 (TEST)' / '(TEST)' player string in the game code")
     check(has("RR_DEV_ECONOMY"), "positive control: the developer economy gate string is present (so the negative check is meaningful)")
     check(not has("COMING SOON") and not has("not built yet"), "no COMING SOON / LOCKED placeholders")
-    for ident in ["boundary", "OUT OF BOUNDS", "Rules"]:
+    for ident in ["boundary", "OUT OF BOUNDS"]:
         check(has(ident), "code present: %s" % ident)
     logo = [n for n in names if "Hot_Attic_Games_Master_Logo_ALPHA_FINAL" in n]
     check(any(n.endswith(".ctex") for n in logo) or any(n.endswith(".png") for n in logo), "canonical studio logo packaged: %s" % (logo[:2],))

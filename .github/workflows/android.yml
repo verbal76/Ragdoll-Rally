@@ -176,6 +176,7 @@ jobs:
 
       - name: Verify APK artifact (identity, SDK, signing, native libs, 16 KB)
         run: |
+          set -o pipefail
           python3 launch/tools/verify_apk.py "${{ steps.export.outputs.apk }}" \
             --package com.hotatticgames.ragdollrally.launch --version-name "${{ steps.rel.outputs.vname }}" \
             --version-code ${{ github.run_number }} --min-sdk 24 --target-sdk 36 \
@@ -189,6 +190,7 @@ jobs:
 
       - name: Inspect APK content (cities, studio logo, no test cheat, governor/boundary code, icon)
         run: |
+          set -o pipefail
           pip install -q zstandard
           python3 launch/tools/inspect_apk_content.py "${{ steps.export.outputs.apk }}" --json-out build/apk_content.json | tee build/apk_content.txt
 

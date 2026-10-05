@@ -46,3 +46,6 @@ CI run, signing identity, checksums. They appear in the release notes' Technical
 ## Multiple platforms
 If a Windows (or other) build is ever added it shares the Android build's public version for the same release
 (`Ragdoll-Rally-Launch-v<N>-Windows.zip`). Platform build counters stay internal.
+
+## v13 note
+v13 ships a dead (unreachable) selector string "LOCKED - not built yet": every environment is playable so no screen can show it. It was found after delivery by inspecting the published APK (the CI content check had masked its own exit code through a `tee` pipe; fixed with `pipefail`). The source is cleaned for the next build; v13 itself is unchanged.
