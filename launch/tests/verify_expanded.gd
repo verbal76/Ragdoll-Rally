@@ -206,7 +206,8 @@ func _run() -> void:
 	for t in tg:
 		xmax = maxf(xmax, t["pos"].x)
 		zmax = maxf(zmax, absf(t["pos"].z))
-	check(xmax >= 180.0 and zmax >= 80.0, "targets reach %.0f m deep and +-%.0f m wide (old village: 58 m deep)" % [xmax, zmax])
+	# v13: the launch governor caps ideal range at 180 m, so the deepest target (Castle Crown) sits at 174 m instead of 189 m and nothing is out of reach
+	check(xmax >= 170.0 and xmax <= 178.0 and zmax >= 80.0, "targets reach %.0f m deep and +-%.0f m wide (old village: 58 m deep)" % [xmax, zmax])
 	check(main.margins.x >= 40.0 and main.margins.y >= 30.0 and main.margins.z >= 40.0 and main.margins.w >= 30.0, "HUD keeps >= safe margins from the screen corners %s" % str(main.margins))
 	# ---- active-body cap
 	var rel := 0

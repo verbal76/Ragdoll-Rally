@@ -24,7 +24,8 @@ The old `bN` numbers were CI run numbers (they double as Android versionCode), s
 | v9 | `launch-g2m-b11` | dense breakable city, TNT, beams, upgrades |
 | v10 | `launch-g2m-b12` | + Hot Attic Games studio splash |
 | v11 | `rr-launch-b15` (re-tagged `v11`) | + "RR Launch" name, new icon, transparent icon background |
-| **v12** | `v12` | gameplay pivot (18 ragdolls, skipping/ricochet physics, limbs, fire, upgrades, Test Yard) + Hot Attic Games studio splash |
+| v12 | `v12` | gameplay pivot (18 ragdolls, skipping/ricochet physics, limbs, fire, upgrades, Test Yard) + Hot Attic Games studio splash |
+| **v13** | `v13` | trajectory governor, graceful world boundary, score-vs-bank economy, five new cities (Downtown, Old Town, Suburbia, Industrial District, Resort Strip), no test cheat |
 
 Why v11 and not v15 or v13: v15 would be the CI run number / versionCode (an internal counter with gaps), and the old tags
 were never a clean sequence. Eleven installable builds were delivered, so the current version is v11.

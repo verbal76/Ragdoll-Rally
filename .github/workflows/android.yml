@@ -152,6 +152,12 @@ jobs:
       - name: Verify (b9 city map - aim mapping, targets, camera, reset)
         run: godot --headless --path launch -s tests/verify_expanded.gd
 
+      - name: Verify (v13 - trajectory governor, boundary, economy score-vs-bank, skips, upgrades, characters, no test cheat)
+        run: godot --headless --path launch -s tests/verify_v13.gd
+
+      - name: Verify (v13 city quality gate - 7 cities, automated throws, reachability, clearance, determinism)
+        run: godot --headless --path launch -s tests/verify_cities.gd
+
       - name: Physics regression vs Godot 4.4.1 reference
         run: |
           godot --headless --path launch -s tests/physics_baseline.gd -- "$GITHUB_WORKSPACE/physics_ci.json"
@@ -180,6 +186,11 @@ jobs:
           assert "android.permission.INTERNET" in r["permissions"], r["permissions"]
           assert r["abis"] == ["arm64-v8a"], r["abis"]
           PY
+
+      - name: Inspect APK content (cities, studio logo, no test cheat, governor/boundary code, icon)
+        run: |
+          pip install -q zstandard
+          python3 launch/tools/inspect_apk_content.py "${{ steps.export.outputs.apk }}" --json-out build/apk_content.json | tee build/apk_content.txt
 
       - uses: actions/upload-artifact@v4
         with:
