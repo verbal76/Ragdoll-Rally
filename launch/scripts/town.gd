@@ -277,6 +277,8 @@ func _prop(model: String, pos: Vector3, real_size: Vector3, mass: float, scale_m
 
 # --------------------------------------------------------------- structures
 func _house() -> void:
+	# v13: the full-size city keeps a 16 m+ clear launch corridor (hx = 12 instead of 10); the legacy village (tests) is unchanged.
+	var hx: int = 10 if legacy else 12
 	# 2 deep x 3 wide x 2 storeys + roof, front face towards the launcher.
 	for ty in 2:
 		for tz in [-1, 0, 1]:
@@ -287,18 +289,18 @@ func _house() -> void:
 			if ty == 1 and tz == 0:
 				fm = "wall-window"
 				tough = 3.0
-			var p := _piece(fm, Vector3(10, ty, tz), "wall", "house", Vector3.ONE, 3.0, tough)
+			var p := _piece(fm, Vector3(hx, ty, tz), "wall", "house", Vector3.ONE, 3.0, tough)
 			if fm == "wall-window":
 				_bonus(p, "window", "House Window", 150)
-			_piece("wall", Vector3(11, ty, tz), "wall", "house", Vector3.ONE, 3.0, 6.5)
+			_piece("wall", Vector3(hx + 1, ty, tz), "wall", "house", Vector3.ONE, 3.0, 6.5)
 	for tz in [-1, 0, 1]:
-		for tx in [10, 11]:
+		for tx in [hx, hx + 1]:
 			var r := _piece("roof", Vector3(tx, 2, tz), "roof", "house", Vector3.ONE, 2.5, 5.5)
-			if tx == 11 and tz == 0:
+			if tx == hx + 1 and tz == 0:
 				_bonus(r, "roof", "House Roof", 100)
 	# chimney on the roof
 	for i in 3:
-		var c := _piece("column", Vector3(11, 3.0 + i * 1.0, 1), "column", "chimney", Vector3(0.4, 1.0, 0.4), 1.0, 3.5)
+		var c := _piece("column", Vector3(hx + 1, 3.0 + i * 1.0, 1), "column", "chimney", Vector3(0.4, 1.0, 0.4), 1.0, 3.5)
 		c.set_meta("group_all", true)
 		if i == 2:
 			_bonus(c, "chimney", "Chimney", 250)
@@ -774,7 +776,7 @@ func _deep_city() -> void:
 		_crate_pyramid(168.0, -10.0 + i * 7.0, 3)
 	var wall_win := _building(118, -8, 1, 17, 3, "castle", true, false, 2)
 	_bonus(wall_win, "castle_window", "Castle Window", 1800)
-	var crown := _tower_stack(126, 0, 13, "crown")
+	var crown := _tower_stack(116, 0, 13, "crown")   # v13: was tile 126 (189 m), beyond the launch governor range cap
 	_bonus(crown, "crown", "Castle Crown", 2500)
 	_tower_stack(118, -10, 6, "ctowerL")
 	_tower_stack(118, 10, 6, "ctowerR")

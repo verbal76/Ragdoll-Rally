@@ -15,6 +15,8 @@ static func build(t, id: String) -> void:
 		"resort": resort(t)
 
 # ============================================================================ DOWNTOWN: verticality
+const DT_FRONT_H: Array[int] = [24, 34, 28, 46, 32, 40, 26]
+const DT_BACK_H: Array[int] = [38, 26, 40, 44, 36, 24, 42]
 const DT_COLORS: Array[Color] = [Color(0.55, 0.62, 0.72), Color(0.42, 0.48, 0.58), Color(0.65, 0.58, 0.52), Color(0.35, 0.40, 0.46), Color(0.70, 0.72, 0.76)]
 
 static func _scaffold(t, x: float, z: float, levels: int, group: String) -> void:
@@ -33,9 +35,8 @@ static func downtown(t) -> void:
 		for k in xs.size():
 			var x: float = xs[k]
 			var hv: int = t.hsh(k, band + 3)
-			var h: float = 22.0 + float(hv % 8) * 5.0                 # 22 .. 57 m
-			if k == 3 and band == 1:
-				h = 58.0
+			var h: float = float((DT_FRONT_H if band == -1 else DT_BACK_H)[k])   # 24 .. 46 m (every roof is reachable under the launch governor)
+			var gk: String = "dt_%d_%d" % [k, band]
 			var zc: float = float(band) * 18.0
 			var col: Color = DT_COLORS[hv % DT_COLORS.size()]
 			var mat: String = "metal" if hv % 3 == 0 else "masonry"
@@ -58,15 +59,28 @@ static func downtown(t) -> void:
 					sign_target = bb
 			# awning over the street + ledges (bounce / ricochet shelves)
 			t._yard_box(Vector3(x, 5.5, zc - float(band) * 9.2), Vector3(11.0, 0.3, 3.2), Color(0.85, 0.2, 0.25) if hv % 2 == 0 else Color(0.2, 0.55, 0.8), "canvas", Basis(Vector3.RIGHT, float(band) * 0.5))
-			t._yard_box(Vector3(x, 14.0, zc - float(band) * 7.9), Vector3(12.0, 0.5, 1.6), Color(0.6, 0.6, 0.62), "masonry")
-			if h > 34.0:
-				t._yard_box(Vector3(x, 30.0, zc - float(band) * 7.9), Vector3(12.0, 0.5, 1.6), Color(0.6, 0.6, 0.62), "masonry")
+			var fz: float = zc - float(band) * 8.1
+			for ly in [14.0, 30.0]:                                      # breakable facade ledges (3 slabs per floor line)
+				if ly < h - 4.0:
+					for lx in [-4.0, 0.0, 4.0]:
+						t._block(Vector3(x + lx, ly, fz), Vector3(3.8, 0.5, 1.6), Color(0.6, 0.6, 0.62), "masonry", 3.0, 6.0, gk)
+			for ly in [8.0, 20.0, 26.0]:                                 # window-box balconies
+				if ly < h - 4.0:
+					t._block(Vector3(x + float(hv % 3 - 1) * 3.0, ly, fz - float(band) * 0.4), Vector3(2.6, 0.5, 1.2), Color(0.35, 0.55, 0.35), "wood", 1.5, 3.0, gk)
+			# rooftop crown: mechanical penthouse + radio mast (breakable, the tallest things in the city)
+			var pent = t._block(Vector3(x + 2.0, h + 2.0, zc), Vector3(5.0, 3.6, 5.0), col.darkened(0.15), "masonry", 5.0, 6.0, gk)
+			for mi in 3:
+				t._block(Vector3(x + 2.0, h + 4.6 + 2.4 * float(mi), zc), Vector3(0.6, 2.4, 0.6), Color(0.8, 0.2, 0.2) if mi == 2 else Color(0.7, 0.7, 0.72), "metal", 1.0, 3.5, gk + "_mast")
+			if k == 5 and band == -1:
+				t._bonus(pent, "dt_pent", "Penthouse", 500)
 			# street furniture
 			t._prop_box(Vector3(x + 9.0, 0.0, zc - float(band) * 10.5), Vector3(3.0, 1.5, 1.6), Color(0.2, 0.45, 0.25), "metal", 25.0)
 			# rear tower band (taller backdrop that can still be hit)
-			var h2: float = 36.0 + float(t.hsh(k, band + 9) % 6) * 5.0
+			var h2: float = 30.0 + float(t.hsh(k, band + 9) % 5) * 4.0
 			t._yard_box(Vector3(x + 9.0, h2 * 0.5, float(band) * 37.0), Vector3(14.0, h2, 14.0), DT_COLORS[(hv + 2) % DT_COLORS.size()], "masonry")
 			t._glass_wall(Vector3(x + 9.0, 0.0, float(band) * 37.0 - float(band) * 7.9), Vector3.RIGHT, Vector3(0, 0, -band), 14.0, h2 * 0.5, 4.6, 5.0)
+			for rx in [-3.0, 3.0]:
+				t._block(Vector3(x + 9.0 + rx, h2 + 1.5, float(band) * 37.0), Vector3(3.0, 3.0, 3.0), Color(0.5, 0.5, 0.55), "masonry", 3.0, 6.0, gk + "_rear")
 	# yellow cabs in the avenue (props: ricochet + points)
 	for k in 6:
 		var cab = t._prop_box(Vector3(xs[k] + 4.0, 0.0, -3.0 + 6.0 * float(k % 2)), Vector3(4.2, 1.4, 1.9), Color(0.95, 0.8, 0.15), "metal", 14.0)
@@ -94,6 +108,7 @@ static func oldtown(t) -> void:
 	var d: int = 2
 	var canal_lo: float = 56.0
 	var canal_hi: float = 64.0
+	var chimney_target = null
 	for r in [-1, 1]:
 		for lane in 2:
 			var oz: int = (3 + lane * 5) if r == 1 else (-(3 + d) - lane * 5)
@@ -129,6 +144,12 @@ static func oldtown(t) -> void:
 	for kx in [46.0, 48.0]:
 		t._tnt_barrel(kx, 0.0)
 		t._tnt_barrel(kx, 1.2)
+	t._bonus(t.props[t.props.size() - 1], "ot_powder", "Powder Store", 400)
+	# town well in the street: stone ring + shingled roof (breakable, 4 posts hold the roof)
+	for wp in [Vector2(-0.8, -0.8), Vector2(0.8, -0.8), Vector2(-0.8, 0.8), Vector2(0.8, 0.8)]:
+		t._block(Vector3(18.0 + wp.x, 0.7, 4.0 + wp.y), Vector3(1.1, 1.4, 1.1), Color(0.6, 0.58, 0.55), "masonry", 3.0, 5.0, "well")
+	var well_roof = t._block(Vector3(18.0, 2.1, 4.0), Vector3(3.2, 0.5, 3.2), Color(0.5, 0.3, 0.2), "roof", 2.0, 4.0, "well", true)
+	t._bonus(well_roof, "ot_well", "Town Well", 300)
 	for i in 14:
 		t._prop("detail-barrel", Vector3(24.0 + float(i) * 6.5, 0.0, 6.0 if i % 2 == 0 else -6.0), Vector3(0.62, 0.75, 0.62), 2.0)
 	# canal with a wooden bridge (water skips fast)
@@ -141,6 +162,8 @@ static func oldtown(t) -> void:
 	t._building(64, 2, 2, 2, 1, "chapel", false, true, -1)
 	if stall_target != null:
 		t._bonus(stall_target, "ot_stall", "Market Stall", 250)
+	if chimney_target != null:
+		t._bonus(chimney_target, "ot_chimney", "Grand Chimney", 350)
 
 # ============================================================================ SUBURBIA: lower heights, long skips
 static func suburbia(t) -> void:
@@ -149,6 +172,8 @@ static func suburbia(t) -> void:
 	var pool_target = null
 	var tramp_target = null
 	var garage_target = null
+	var mail_target = null
+	var shed_target = null
 	for side in [-1, 1]:
 		for k in xs.size():
 			var x: float = xs[k]
@@ -189,12 +214,22 @@ static func suburbia(t) -> void:
 				_:
 					t._wood_house(int(x / 1.5), int(bz / 1.5), 2, 2, 1, group + "_shed")
 	# utility poles along the road (tall wood, cross arms)
+	var pole_target = null
 	for i in 5:
 		var px: float = 30.0 + float(i) * 22.0
-		t._yard_box(Vector3(px, 5.0, 5.2), Vector3(0.4, 10.0, 0.4), Color(0.45, 0.32, 0.2), "wood")
+		var pole = t._yard_box(Vector3(px, 5.0, 5.2), Vector3(0.4, 10.0, 0.4), Color(0.45, 0.32, 0.2), "wood")
+		if i == 3:
+			pole_target = pole
 		t._yard_box(Vector3(px, 9.4, 5.2), Vector3(0.3, 0.3, 3.0), Color(0.45, 0.32, 0.2), "wood")
 	# playground slide in the cul-de-sac end
-	t._yard_box(Vector3(136.0, 1.6, 0.0), Vector3(8.0, 0.3, 2.4), Color(0.9, 0.7, 0.1), "water", Basis(Vector3.BACK, deg_to_rad(-22.0)))
+	var slide = t._yard_box(Vector3(136.0, 1.6, 0.0), Vector3(8.0, 0.3, 2.4), Color(0.9, 0.7, 0.1), "water", Basis(Vector3.BACK, deg_to_rad(-22.0)))
+	t._bonus(slide, "sub_slide", "Playground Slide", 250)
+	if mail_target != null:
+		t._bonus(mail_target, "sub_mail", "Mailbox Smash", 350)
+	if shed_target != null:
+		t._bonus(shed_target, "sub_shed", "Garden Shed", 200)
+	if pole_target != null:
+		t._bonus(pole_target, "sub_pole", "Utility Pole", 400)
 	if pool_target != null:
 		t._bonus(pool_target, "sub_pool", "Cannonball", 300)
 	if tramp_target != null:
@@ -270,14 +305,42 @@ static func industrial(t) -> void:
 		t._yard_box(Vector3(30.0 + float(i) * 5.0, 1.2, 0.0 if i % 2 == 0 else 8.0), Vector3(3.0, 2.4, 2.2), Color(0.4, 0.5, 0.55), "metal")
 
 # ============================================================================ RESORT STRIP: spectacle + weird rebounds
+static func _lifeguard(t, x: float, z: float, g: String) -> void:
+	var wood := Color(1.0, 0.95, 0.9)
+	for dx in [-1.0, 1.0]:
+		for dz in [-0.8, 0.8]:
+			t._block(Vector3(x + dx, 1.5, z + dz), Vector3(0.3, 3.0, 0.3), wood, "wood", 1.0, 3.0, g)
+	t._block(Vector3(x, 3.2, z), Vector3(3.0, 0.3, 2.4), Color(1.0, 0.4, 0.4), "wood", 2.0, 3.0, g)
+	t._block(Vector3(x, 5.0, z), Vector3(3.4, 0.3, 2.8), Color(1.0, 0.4, 0.4), "canvas", 1.5, 3.0, g)
+
+static func _tiki(t, x: float, z: float, g: String) -> void:
+	var thatch := Color(0.78, 0.6, 0.3)
+	for dx in [-1.6, 1.6]:
+		for dz in [-1.2, 1.2]:
+			t._block(Vector3(x + dx, 1.4, z + dz), Vector3(0.35, 2.8, 0.35), Color(0.45, 0.3, 0.18), "wood", 1.0, 3.0, g)
+	t._block(Vector3(x, 3.1, z), Vector3(4.2, 0.5, 3.4), thatch, "roof", 2.0, 3.5, g)
+	t._block(Vector3(x, 0.6, z), Vector3(3.0, 1.2, 0.9), Color(0.55, 0.4, 0.25), "wood", 3.0, 4.0, g)
+
+static func _umbrella(t, x: float, z: float, g: String, col: Color) -> void:
+	t._block(Vector3(x, 1.4, z), Vector3(0.18, 2.8, 0.18), Color(0.9, 0.9, 0.9), "wood", 0.6, 2.5, g)
+	t._block(Vector3(x, 2.9, z), Vector3(3.2, 0.2, 3.2), col, "canvas", 1.0, 2.5, g, true)
+
+static func _kiosk(t, x: float, z: float, g: String) -> void:
+	t._block(Vector3(x, 1.5, z), Vector3(4.0, 3.0, 3.0), Color(0.98, 0.85, 0.6), "wood", 5.0, 4.5, g)
+	t._block(Vector3(x, 3.3, z), Vector3(4.8, 0.4, 3.8), Color(0.2, 0.7, 0.8), "roof", 2.0, 3.5, g)
+	t._block(Vector3(x, 0.9, z + (1.7 if z < 0.0 else -1.7)), Vector3(3.0, 0.5, 0.8), Color(1, 0.8, 0.3), "canvas", 1.0, 2.5, g)
+
 static func _hotel(t, cx: float, cz: float, w: float, h: float, d: float, col: Color, toward: int, label: String) -> Object:
 	var body = t._yard_box(Vector3(cx, h * 0.5, cz), Vector3(w, h, d), col, "masonry")
 	var face_z: float = cz + float(toward) * (d * 0.5 + 0.9)
 	t._glass_wall(Vector3(cx, 0.0, face_z), Vector3.RIGHT, Vector3(0, 0, toward), w, h - 2.0, w / float(maxi(int(w / 4.6), 1)), 4.0)
-	for y in [8.0, 16.0, 24.0]:
+	var hg: String = "hotel_%d" % int(cx)
+	for y in [8.0, 16.0, 24.0]:                                                   # breakable balcony slabs
 		if y < h - 4.0:
-			t._yard_box(Vector3(cx, y, cz + float(toward) * (d * 0.5 + 1.4)), Vector3(w - 2.0, 0.4, 2.2), Color(0.95, 0.95, 0.95), "masonry")
-	t._yard_box(Vector3(cx, 5.2, cz + float(toward) * (d * 0.5 + 3.0)), Vector3(9.0, 0.3, 4.0), Color(1.0, 0.5, 0.7), "canvas", Basis(Vector3.RIGHT, -float(toward) * 0.4))
+			for bx in [-1.0, 0.0, 1.0]:
+				t._block(Vector3(cx + bx * (w - 2.0) / 3.0, y, cz + float(toward) * (d * 0.5 + 1.4)), Vector3((w - 2.0) / 3.0 - 0.2, 0.4, 2.2), Color(0.95, 0.95, 0.95), "masonry", 3.0, 6.0, hg)
+	for bx in [-1.0, 0.0, 1.0]:                                                   # striped entrance awning
+		t._block(Vector3(cx + bx * 3.2, 5.2, cz + float(toward) * (d * 0.5 + 3.0)), Vector3(3.0, 0.3, 4.0), Color(1.0, 0.5, 0.7) if int(bx) % 2 == 0 else Color(1.0, 0.95, 0.9), "canvas", 1.5, 3.0, hg + "_awn")
 	var sign_b = t._yard_box(Vector3(cx, h + 3.0, cz), Vector3(0.4, 5.0, w * 0.7), Color(1.0, 0.85, 0.3), "metal", Basis(Vector3.BACK, deg_to_rad(-20.0)))
 	t._sign_label(label, Vector3(cx - 0.9, h + 3.2, cz), Color(1.0, 0.2, 0.6), 0.08)
 	return sign_b
@@ -286,6 +349,15 @@ static func resort(t) -> void:
 	var sign_a = _hotel(t, 52.0, -22.0, 22.0, 34.0, 18.0, Color(1.0, 0.62, 0.7), 1, "FLAMINGO")
 	t._bonus(sign_a, "rs_sign", "Flamingo Sign", 900)
 	t._glass_wall(Vector3(40.0, 0.0, -22.0), Vector3(0, 0, 1), Vector3(-1, 0, 0), 16.0, 12.0, 4.0, 4.0)       # lobby glass facing the launcher
+	_lifeguard(t, 38.0, -11.0, "lg_a")
+	_lifeguard(t, 38.0, 11.0, "lg_b")
+	_tiki(t, 74.0, -14.0, "tiki_a")
+	_tiki(t, 84.0, 4.0, "tiki_b")
+	for u in 6:
+		_umbrella(t, 62.0 + float(u) * 4.0, -12.0 if u % 2 == 0 else 12.0, "umb_%d" % u, Color(1.0, 0.35, 0.45) if u % 2 == 0 else Color(0.3, 0.8, 0.9))
+	var kx: Array[float] = [64.0, 72.0, 80.0, 114.0]
+	for i in 4:
+		_kiosk(t, kx[i], -26.0 if i % 2 == 0 else 26.0, "kiosk_%d" % i)
 	var pent = _hotel(t, 96.0, 22.0, 26.0, 44.0, 18.0, Color(0.45, 0.85, 0.85), -1, "AQUA")
 	t._bonus(pent, "rs_aqua", "Aqua Penthouse", 600)
 	_hotel(t, 124.0, -22.0, 20.0, 28.0, 16.0, Color(1.0, 0.9, 0.45), 1, "SUNSET")
@@ -322,4 +394,4 @@ static func resort(t) -> void:
 	for sz in [-14.0, 14.0]:
 		var shop_h: float = 7.0
 		t._yard_box(Vector3(32.0, shop_h * 0.5, sz + (3.5 if sz < 0.0 else -3.5)), Vector3(16.0, shop_h, 7.0), Color(0.55, 0.85, 0.9) if sz < 0.0 else Color(0.95, 0.8, 0.5), "masonry")
-		t._glass_wall(Vector3(32.0, 0.0, sz + (-0.1 if sz < 0.0 else 0.1) + (7.0 if sz < 0.0 else -7.0) * 0.0 + (0.0 if sz < 0.0 else 0.0)), Vector3.RIGHT, Vector3(0, 0, 1 if sz < 0.0 else -1), 16.0, 6.0, 4.0, 3.0)
+		t._glass_wall(Vector3(32.0, 0.0, sz + (-0.1 if sz < 0.0 else 0.1)), Vector3.RIGHT, Vector3(0, 0, 1 if sz < 0.0 else -1), 16.0, 6.0, 4.0, 3.0)
