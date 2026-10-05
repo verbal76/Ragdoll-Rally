@@ -2,7 +2,7 @@
   "product": "Ragdoll Rally Launch",
   "file_stem": "Ragdoll-Rally-Launch",
   "version": 13,
-  "deliver": false,
+  "deliver": true,
   "notes": [
     "Launches can no longer shoot almost straight up: the upward angle is soft-limited, with loft and long throws kept.",
     "The invisible world edge no longer blows you up - touching it just ends the run cleanly.",
