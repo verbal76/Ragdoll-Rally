@@ -17,6 +17,10 @@ on:
         required: true
         default: 'test'
 
+concurrency:
+  group: launch-ota-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 

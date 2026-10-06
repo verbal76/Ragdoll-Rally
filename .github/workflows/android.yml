@@ -2,14 +2,20 @@ name: Android Launch POC
 
 # Native generation G2: Godot 4.7.1, Gradle build route, targetSdk 36.
 # (The G1 line, Godot 4.4.1 / API 34, lives on branch ccr-7c0d7291-e3d5o1 with releases launch-poc-b2..b6.)
+# GitHub Actions budget policy (see CLAUDE.md): this workflow builds an APK, so it must NOT run on routine pushes.
+# It runs only when (a) release/release.json is pushed (a delivery decision) - and then only if that file says "deliver": true -
+# or (b) someone starts it by hand (workflow_dispatch) to get an internal test APK for physical testing.
+# Everything else (tests, content checks, docs) is proven locally first: tools/local_validate.sh.
 on:
   push:
-    branches: [claude/launch-api36-modernization, claude/launch-expanded-playfield, claude/launch-mayhem-upgrades, claude/launch-gameplay-pivot]
+    branches: [claude/launch-gameplay-pivot]
     paths:
-      - 'launch/**'
-      - 'release/**'
-      - '.github/workflows/android.yml'
+      - 'release/release.json'
   workflow_dispatch:
+
+concurrency:
+  group: android-launch-${{ github.ref }}
+  cancel-in-progress: false      # never kill a run that may be mid-publish; a newer queued run replaces older queued ones
 
 permissions:
   contents: write
@@ -20,7 +26,24 @@ env:
   SIGNING_CERT_SHA256: 32a3988d6348d9eedcc95b40202d5f35e3b0a4d96ac042319de0f7ca7e3dc15b
 
 jobs:
+  gate:
+    # ~10 s: decides whether the expensive build is warranted. A push that only touched release.json with deliver=false does nothing.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.g.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: release
+      - id: g
+        run: |
+          D=$(python3 -c "import json;print(str(json.load(open('release/release.json')).get('deliver', False)).lower())")
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$D" = "true" ]; then echo "build=true" >> "$GITHUB_OUTPUT"; else echo "build=false" >> "$GITHUB_OUTPUT"; echo "deliver=false on a push: no build (budget policy)"; fi
+
   build:
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
