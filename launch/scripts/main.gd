@@ -4,6 +4,7 @@ extends Node3D
 
 const Rules := preload("res://scripts/rules.gd")
 const Destruction := preload("res://scripts/destruction.gd")
+const CamSafe := preload("res://scripts/cam_safe.gd")
 const Fx := preload("res://scripts/fx.gd")
 const SelectUI := preload("res://scripts/select_ui.gd")
 
@@ -93,6 +94,14 @@ var _air_since_skip: bool = true
 var economy_reset_note: bool = false
 const ECONOMY_SCHEMA := 3          # 3 = 20-level mayhem upgrades (levels re-spent on the new curve, surplus refunded)
 var migration_refund := 0
+var slowmo: Dictionary = Rules.slowmo_new()
+var slowmo_enabled := true
+var _slow_event := 0.0
+var _slow_clock := 0.0
+var _cam_block_t: float = -9.0
+var craters := 0
+var _secondary_blasts := 0
+var _pending_blasts: Array = []
 var _pop_slot: int = 0
 var _wound_down: bool = false
 var cam_event: float = 0.0             # briefly widens the camera after big events
@@ -611,6 +620,8 @@ func _on_again() -> void:
 	reset()
 
 func reset() -> void:
+	Engine.time_scale = 1.0
+	slowmo = Rules.slowmo_new()
 	if is_instance_valid(ragdoll):
 		remove_child(ragdoll)
 		ragdoll.queue_free()
@@ -667,6 +678,9 @@ func reset() -> void:
 	skips = 0
 	ricochets = 0
 	limbs_lost = 0
+	craters = 0
+	_secondary_blasts = 0
+	_pending_blasts.clear()
 	fires_started = 0
 	_fire_next = 4
 	_tramp_uses = 0
@@ -949,6 +963,8 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 			pass_through = true
 			keep = maxf(float(pr["keep"]), 0.3)
 			mat = m0
+			_slow_event = maxf(_slow_event, Rules.slowmo_weight(released.size(), eff * float(fxp["destruct_mult"])))
+			cam_event = maxf(cam_event, clampf(float(released.size()) / 16.0, 0.3, 1.0))
 	elif other.has_meta("decor"):
 		if speed > 5.0 and town.break_decor(other as StaticBody3D, vdir, speed):
 			scoring.add_smash(other.get_instance_id(), int(10.0 * clampf(eff / 14.0, 0.6, 2.5)), pos)
@@ -1031,10 +1047,12 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 				var cand: RigidBody3D = attached[randi() % attached.size()]
 				if randf() < Rules.dismember_chance(speed * 0.85, String(cand.name), fxp) * 0.6:
 					_lose_limb(cand, n, speed, cand.global_position)
-	if Rules.explosive_impact(speed, fxp, randf()) and now - _last_boom > 0.6:
+	var xlv: int = int(fxp.get("explode_level", 0))
+	if Rules.explosive_impact(speed, fxp, randf()) and now - _last_boom > 0.6 + 0.05 * float(xlv):
 		_last_boom = now
-		var res: Dictionary = town.explode(pos, maxf(float(fxp["explode_radius"]), 7.0), maxf(float(fxp["explode_power"]), 20.0))
-		_apply_blast_result(res, "boomimpact_%d" % int(now * 10.0), pos)
+		var br: float = float(fxp["explode_radius"])
+		var res: Dictionary = town.explode(pos, br, float(fxp["explode_power"]))
+		_apply_blast_result(res, "boomimpact_%d" % int(now * 10.0), pos, br, xlv)
 	var ign: int = int(fxp.get("ignition", 0))
 	if ign > 0 and speed >= float(fxp["ignite_speed"]) and not ragdoll.is_burning("torso"):
 		ragdoll.ignite_all(7.0 + 3.0 * float(ign))
@@ -1070,16 +1088,48 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 			fx.debris(mat, pos, n, 1.0)
 			fx.dust(pos, 1.3)
 			fx.blood(pos, n, 1.0)
-			if n.y > 0.7:
-				fx.splat(pos, n, 0.8)
+			_blood_mark(pos, -n, 0.8, 1)
 			_burst(pos)
 		"extreme":
 			trauma = maxf(trauma, 0.95)
 			cam_event = maxf(cam_event, 1.0)
 			fx.debris(mat, pos, n, 1.6)
 			fx.blood(pos, n, 1.8)
-			fx.splat(pos, n, 1.2)
+			_blood_mark(pos, -n, 1.2, 3)
 			_burst(pos)
+
+## Blood goes ON the surface that was hit: ray from the ragdoll into the surface (along `toward`), mark at the real hit point with the
+## real hit normal (wall, roof, slope or ground), glued to the body it hit if that body moves. `spread` extra marks splash
+## around it, each re-projected onto the surface so they never float. Returns [{pos, normal}] for tests.
+func _blood_mark(pos: Vector3, toward: Vector3, size: float, spread: int = 0) -> Array:
+	var placed: Array = []
+	if not gore or not is_inside_tree():
+		return placed
+	var d: Vector3 = toward.normalized() if toward.length() > 0.01 else Vector3.DOWN
+	var space: PhysicsDirectSpaceState3D = get_viewport().world_3d.direct_space_state
+	var t1: Vector3 = d.cross(Vector3.UP)
+	if t1.length() < 0.2:
+		t1 = d.cross(Vector3.RIGHT)
+	t1 = t1.normalized()
+	var t2: Vector3 = d.cross(t1)
+	for k in spread + 1:
+		var off := Vector3.ZERO
+		if k > 0:
+			var a: float = randf() * TAU
+			off = (t1 * cos(a) + t2 * sin(a)) * randf_range(0.5, 1.2 + 0.5 * size)
+		var from: Vector3 = pos - d * 1.4 + off
+		var q := PhysicsRayQueryParameters3D.create(from, from + d * 3.2, 1 | 4)
+		var hit: Dictionary = space.intersect_ray(q)
+		if hit.is_empty():
+			continue
+		var host: Node3D = null
+		var col = hit["collider"]
+		if col is RigidBody3D:
+			host = col
+		var nrm: Vector3 = hit["normal"]
+		fx.splat(hit["position"], nrm, size * (1.0 if k == 0 else randf_range(0.45, 0.8)), host)
+		placed.append({"pos": hit["position"], "normal": nrm})
+	return placed
 
 ## The world edge is NOT a destructive surface. Touching it ends the throw cleanly: no blood, limbs, explosions or score
 ## (v12: the invisible wall was treated as masonry, so a fast throw "exploded" in mid-air against nothing).
@@ -1101,8 +1151,7 @@ func _lose_limb(part: RigidBody3D, n: Vector3, speed: float, pos: Vector3) -> vo
 		return
 	limbs_lost += 1
 	fx.blood(pos, n, 1.4)
-	if _agl(pos) < 1.6:
-		fx.splat(Vector3(pos.x, town.ground_y(pos.x, pos.z), pos.z), town.ground_normal(pos.x, pos.z), 0.9)
+	_blood_mark(pos, -n, 0.9, 2)                      # the wall / roof / ground the limb was torn off against
 	scoring.award("limb_%d" % b.get_instance_id(), "LIMB LOST!", 150, "Carnage", pos)
 	sfx.play("limb", 0.0, randf_range(0.9, 1.2))
 	trauma = maxf(trauma, 0.7)
@@ -1131,9 +1180,11 @@ func _on_burned(node: Node3D, pos: Vector3) -> void:
 
 func _blast(b: RigidBody3D) -> void:
 	var res: Dictionary = town.detonate(b)
-	_apply_blast_result(res, "tnt_%d" % b.get_instance_id(), b.global_position)
+	_apply_blast_result(res, "tnt_%d" % b.get_instance_id(), b.global_position, float(b.get_meta("blast_r", 9.0)), 0)
 
-func _apply_blast_result(res: Dictionary, key: String, origin: Vector3) -> void:
+## Blast aftermath. `radius` = blast radius (m); `xlv` = Explosive Impact level (0 = a barrel / chain blast): picks crater size,
+## secondary explosions, shake, slowdown and how far the ragdoll itself is thrown.
+func _apply_blast_result(res: Dictionary, key: String, origin: Vector3, radius: float = 7.0, xlv: int = 0, secondary: bool = false) -> void:
 	var blasts: Array = res["blasts"]
 	if blasts.is_empty():
 		return
@@ -1142,21 +1193,36 @@ func _apply_blast_result(res: Dictionary, key: String, origin: Vector3) -> void:
 		if scoring.add_smash((rp as RigidBody3D).get_instance_id(), damage_points(rp as RigidBody3D, 24.0), (rp as RigidBody3D).global_position):
 			dmg += damage_points(rp as RigidBody3D, 24.0)
 	scoring.award(key, "BOOM x%d" % blasts.size(), 60 * blasts.size() + dmg, "Explosions", origin)
-	for c in blasts:
+	for bi in blasts.size():
+		var c: Vector3 = blasts[bi]
 		_burst(c)
-		fx.explosion(c, 7.0)
+		fx.explosion(c, radius if bi == 0 else radius * 0.7)
 	_flash(blasts[0])
-	trauma = 1.0
+	var shake: float = clampf(0.55 + radius / 40.0, 0.6, 1.0)
+	trauma = maxf(trauma, shake)
 	cam_event = 1.0
-	sfx.play("boom", 2.0, randf_range(0.85, 1.05))
+	sfx.play("boom", 2.0, randf_range(0.85, 1.05) * clampf(1.1 - radius / 80.0, 0.7, 1.05))
 	_last_event = flight_t
+	_slow_event = maxf(_slow_event, Rules.slowmo_weight(0, 0.0, radius))
+	var tier: int = Rules.crater_tier(xlv)
+	if tier > 0 and not secondary and _agl(origin) < radius * 0.7 + 3.0:
+		var gp := Vector3(origin.x, town.ground_y(origin.x, origin.z), origin.z)
+		var cr: float = fx.crater(gp, town.ground_normal(origin.x, origin.z), radius, tier)
+		craters += 1
+		scoring.award("crater_%d" % craters, "CRATER" if tier < 3 else "CRATER!!", 120 * tier, "Explosions", origin)
+		# secondary explosions around the rim (bounded): fuel, gas lines and cooking-off munitions
+		if tier >= 3 and _secondary_blasts < 12:
+			for k in tier - 1:
+				_pending_blasts.append({"t": flight_t + randf_range(0.2, 0.75), "pos": gp + Vector3(randf_range(-1, 1), 0.5, randf_range(-1, 1)).normalized() * cr * randf_range(0.5, 1.1), "r": radius * 0.42, "p": float(res.get("power", 24.0)) * 0.55})
+				_secondary_blasts += 1
 	if not classic:
 		for c in blasts:
 			for bd in ragdoll.bodies:
 				var dv: Vector3 = bd.global_position - (c as Vector3)
 				var dist: float = dv.length()
-				if dist < 9.0:
-					bd.apply_central_impulse((dv.normalized() + Vector3(0, 0.5, 0)).normalized() * 22.0 * (1.0 - dist / 9.0) * bd.mass)
+				var reach: float = maxf(radius * 1.05, 9.0)
+				if dist < reach:
+					bd.apply_central_impulse((dv.normalized() + Vector3(0, 0.5, 0)).normalized() * (20.0 + 0.9 * radius) * (1.0 - dist / reach) * bd.mass)
 	else:
 		for c in blasts:
 			for bd in ragdoll.bodies:
@@ -1164,6 +1230,19 @@ func _apply_blast_result(res: Dictionary, key: String, origin: Vector3) -> void:
 				var dist2: float = dv2.length()
 				if dist2 < 9.0:
 					bd.apply_central_impulse((dv2.normalized() + Vector3(0, 0.5, 0)).normalized() * 20.0 * (1.0 - dist2 / 9.0) * bd.mass)
+
+## Secondary explosions queued by a big blast (bounded by _secondary_blasts).
+func _run_pending_blasts() -> void:
+	if _pending_blasts.is_empty():
+		return
+	var keep: Array = []
+	for pb in _pending_blasts:
+		if flight_t >= float(pb["t"]):
+			var res: Dictionary = town.explode(pb["pos"], float(pb["r"]), float(pb["p"]))
+			_apply_blast_result(res, "sec_%d_%d" % [int(flight_t * 10.0), keep.size()], pb["pos"], float(pb["r"]), 0, true)
+		else:
+			keep.append(pb)
+	_pending_blasts = keep
 
 func _on_impact_classic(part: RigidBody3D, other: Node, speed: float, pos: Vector3) -> void:
 	if state != State.FLIGHT:
@@ -1308,6 +1387,7 @@ func _physics_process(dt: float) -> void:
 		return
 	flight_t += dt
 	scoring.clock = flight_t
+	_run_pending_blasts()
 	if not classic:
 		_skid(dt)
 		_pivot_tick(dt)
@@ -1437,6 +1517,15 @@ func _process(dt: float) -> void:
 		frame_sum += dt
 		frame_n += 1
 		frame_worst = maxf(frame_worst, dt)
+	var real_dt: float = dt / maxf(Engine.time_scale, 0.05)
+	_slow_clock += real_dt
+	if state == State.FLIGHT and slowmo_enabled:
+		slowmo = Rules.slowmo_step(slowmo, _slow_clock, real_dt, _slow_event)
+		Engine.time_scale = float(slowmo["scale"])
+	elif Engine.time_scale != 1.0:
+		Engine.time_scale = 1.0
+		slowmo = Rules.slowmo_new()
+	_slow_event = 0.0
 	lbl_fps.text = "%d fps  phys %.1fms  bodies %d" % [Engine.get_frames_per_second(), Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, int(Performance.get_monitor(Performance.PHYSICS_3D_ACTIVE_OBJECTS))]
 	_update_camera(dt)
 
@@ -1461,7 +1550,25 @@ func _update_camera(dt: float) -> void:
 		pos.y = maxf(pos.y, (town.ground_y(pos.x, pos.z) if is_instance_valid(town) else 0.0) + 2.2)
 		var look: Vector3 = c + _trav_dir * 3.0 + Vector3(0, 0.5, 0)
 		_cam_look = _cam_look.lerp(look, 1.0 - exp(-7.0 * dt))
-		cam.global_position = cam.global_position.lerp(pos, 1.0 - exp(-(4.0 if classic else 6.0) * dt))
+		# collision-safe: never inside terrain / standing buildings, always a line of sight to Ragnar (hysteresis: snaps in, eases out)
+		var focus: Vector3 = c + Vector3(0, 0.6, 0)
+		var follow: float = (4.0 if classic else 6.0) * lerpf(1.0, 0.55, clampf(cam_event, 0.0, 1.0))   # calmer while things break
+		if is_inside_tree():
+			var safe: Vector3 = CamSafe.resolve(get_viewport().world_3d.direct_space_state, focus, pos)
+			var blocked: bool = safe.distance_to(pos) > 0.2
+			if blocked:
+				_cam_block_t = flight_t
+			var cur_d: float = cam.global_position.distance_to(focus)
+			var tgt_d: float = safe.distance_to(focus)
+			var rate: float = follow
+			if tgt_d < cur_d - 0.01 or CamSafe.inside_solid(get_viewport().world_3d.direct_space_state, cam.global_position):
+				rate = 16.0                                  # something is in the way: come in at once
+			elif flight_t - _cam_block_t < 0.4:
+				rate = 1.5                                   # just cleared: do not pop back out
+			pos = safe
+			cam.global_position = cam.global_position.lerp(pos, 1.0 - exp(-rate * dt))
+		else:
+			cam.global_position = cam.global_position.lerp(pos, 1.0 - exp(-follow * dt))
 		cam.look_at(_cam_look, Vector3.UP)
 	else:
 		_cam_look = LAUNCH_ORIGIN

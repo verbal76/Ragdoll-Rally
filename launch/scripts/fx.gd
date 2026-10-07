@@ -9,7 +9,10 @@ extends Node3D
 const FLAME_POOL := 20
 const FLAME_SMOKE_POOL := 8          # smoke columns on the first N flames only
 const SMOKE_POOL := 8                # one-shot smoke from objects that burn out
-const SPLAT_POOL := 40               # persistent blood marks (hard cap)
+const SPLAT_POOL := 90               # persistent blood marks (hard cap)
+const CRATER_POOL := 6               # persistent craters (hard cap, oldest recycled)
+const RING_POOL := 4                 # expanding shockwave rings
+const CRATER_FLAMES := 3             # long-burning crater fires (shares FLAME_POOL)
 const SPLAT_LIFE := 30.0             # seconds before a mark is recycled (it shrinks away over the last 3 s)
 const ATLAS_PATH := "res://assets/fx/splat_atlas.png"
 const ATLAS_COLS := 6
@@ -41,6 +44,16 @@ var _splat_age: Array[float] = []
 var _splat_base: Array[float] = []
 var _spi: int = 0
 var _splat_mats: Array[StandardMaterial3D] = []
+var _splat_follow: Array = []          # per mark: the body it sticks to (or null) - the mark rides moving chunks
+var _splat_local: Array[Transform3D] = []
+var _craters: Array[Node3D] = []
+var _crater_i: int = 0
+var _crater_flame: Array[int] = []
+var _rings: Array[MeshInstance3D] = []
+var _ring_t: Array[float] = []
+var _ring_r: Array[float] = []
+var _ri: int = 0
+var _flash_k: float = 1.0
 var _scale_curve: Curve
 var _fire_shader: Shader
 var _smoke_shader: Shader
@@ -70,9 +83,9 @@ func _ready() -> void:
 		_crumble.append(_puff_emitter(crumble_mesh, 12, 1.7, 2.0, 7.0, Vector3(0, 1.0, 0), 75.0, true, 1.2, 2.4))
 	var fire_mesh: Mesh = _puff_mesh(0.5, Color(1.0, 0.58, 0.12), 1.0)
 	var smoke_mesh: Mesh = _puff_mesh(0.55, Color(0.78, 0.78, 0.80), 0.0)
-	for i in 4:
-		_boom.append(_puff_emitter(fire_mesh, 14, 0.7, 5.0, 13.0, Vector3(0, 1.5, 0), 180.0, true, 0.9, 2.0))
-		_boom_smoke.append(_puff_emitter(smoke_mesh, 14, 2.3, 2.0, 8.0, Vector3(0, 2.2, 0), 180.0, true, 1.2, 2.6))
+	for i in 8:
+		_boom.append(_puff_emitter(fire_mesh, 22, 0.7, 5.0, 13.0, Vector3(0, 1.5, 0), 180.0, true, 0.9, 2.0))
+		_boom_smoke.append(_puff_emitter(smoke_mesh, 22, 2.3, 2.0, 8.0, Vector3(0, 2.2, 0), 180.0, true, 1.2, 2.6))
 		var fl := MeshInstance3D.new()
 		var qm := QuadMesh.new()
 		qm.size = Vector2(1, 1)
@@ -126,6 +139,117 @@ func _ready() -> void:
 	for i in SMOKE_POOL:
 		var s2 := _puff_emitter(burn_mesh, 8, 2.6, 1.0, 3.0, Vector3(0, 1.6, 0), 28.0, true, 1.0, 2.2)
 		_smoke.append(s2)
+	_build_craters()
+
+
+# ----------------------------------------------------------------------------------------------- craters / shockwaves
+func _crater_texture() -> Texture2D:
+	var n := 96
+	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+	for y in n:
+		for x in n:
+			var d: float = Vector2(float(x) - n * 0.5 + 0.5, float(y) - n * 0.5 + 0.5).length() / (n * 0.5)
+			var ang: float = atan2(float(y) - n * 0.5, float(x) - n * 0.5)
+			var ragged: float = 1.0 + 0.12 * sin(ang * 7.0) + 0.08 * sin(ang * 13.0 + 1.3)
+			var e: float = d / ragged
+			var a: float = 0.0
+			var c := Color(0.05, 0.04, 0.035)
+			if e < 0.55:
+				a = 0.96
+			elif e < 1.0:
+				a = 0.96 * (1.0 - (e - 0.55) / 0.45)
+				c = c.lerp(Color(0.16, 0.12, 0.09), (e - 0.55) / 0.45)
+			img.set_pixel(x, y, Color(c.r, c.g, c.b, a))
+	return ImageTexture.create_from_image(img)
+
+func _build_craters() -> void:
+	var tex: Texture2D = _crater_texture()
+	var disc_mat := StandardMaterial3D.new()
+	disc_mat.albedo_texture = tex
+	disc_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	disc_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	disc_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var rim_mat := StandardMaterial3D.new()
+	rim_mat.albedo_color = Color(0.36, 0.28, 0.20)
+	rim_mat.roughness = 1.0
+	for i in CRATER_POOL:
+		var root := Node3D.new()
+		root.visible = false
+		var disc := MeshInstance3D.new()
+		var qm := QuadMesh.new()
+		qm.size = Vector2(2, 2)
+		qm.orientation = PlaneMesh.FACE_Y
+		qm.material = disc_mat
+		disc.mesh = qm
+		disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		root.add_child(disc)
+		var rim := MeshInstance3D.new()
+		var tm := TorusMesh.new()
+		tm.inner_radius = 0.80
+		tm.outer_radius = 1.0
+		tm.rings = 20
+		tm.ring_segments = 6
+		tm.material = rim_mat
+		rim.mesh = tm
+		rim.scale = Vector3(1.0, 0.35, 1.0)
+		rim.position = Vector3(0, 0.02, 0)
+		rim.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		root.add_child(rim)
+		add_child(root)
+		_craters.append(root)
+		_crater_flame.append(-1)
+	var rmat := StandardMaterial3D.new()
+	rmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	rmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	rmat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	rmat.albedo_color = Color(1.0, 0.8, 0.5, 0.5)
+	rmat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	for i in RING_POOL:
+		var r := MeshInstance3D.new()
+		var tr := TorusMesh.new()
+		tr.inner_radius = 0.9
+		tr.outer_radius = 1.0
+		tr.rings = 28
+		tr.ring_segments = 4
+		tr.material = rmat
+		r.mesh = tr
+		r.visible = false
+		r.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(r)
+		_rings.append(r)
+		_ring_t.append(-1.0)
+		_ring_r.append(1.0)
+
+## Persistent scorched crater (and a long-burning fire inside the big ones) on the ground/slope at `pos`.
+## tier 1 small .. 4 catastrophic (Rules.crater_tier); `radius` = blast radius in metres. Returns the crater's visual radius.
+func crater(pos: Vector3, normal: Vector3, radius: float, tier: int) -> float:
+	if tier <= 0:
+		return 0.0
+	var i: int = _crater_i
+	_crater_i = (_crater_i + 1) % _craters.size()
+	var r: float = radius * (0.30 + 0.07 * float(tier))
+	var n: Vector3 = normal.normalized() if normal.length() > 0.01 else Vector3.UP
+	var bx: Vector3 = Vector3.UP.cross(n)
+	if bx.length() < 0.2:
+		bx = Vector3.RIGHT.cross(n)
+	bx = bx.normalized()
+	var node: Node3D = _craters[i]
+	node.global_transform = Transform3D(Basis(bx, n, bx.cross(n)).scaled(Vector3(r, r, r)), pos + n * 0.06)
+	node.visible = true
+	if _crater_flame[i] >= 0:
+		flame_stop(_crater_flame[i])
+		_crater_flame[i] = -1
+	if tier >= 3:
+		_crater_flame[i] = flame_start(pos + n * 0.2, -(1000 + i), 0.9 + 0.35 * float(tier))
+	return r
+
+func shockwave(pos: Vector3, radius: float) -> void:
+	var i: int = _ri
+	_ri = (_ri + 1) % _rings.size()
+	_ring_t[i] = 0.0
+	_ring_r[i] = radius
+	_rings[i].global_position = pos + Vector3(0, 0.4, 0)
+	_rings[i].visible = true
 
 # ----------------------------------------------------------------------------------------------- builders
 func _build_splats() -> void:
@@ -162,6 +286,8 @@ func _build_splats() -> void:
 		_splats.append(mi)
 		_splat_age.append(-1.0)
 		_splat_base.append(1.0)
+		_splat_follow.append(null)
+		_splat_local.append(Transform3D.IDENTITY)
 
 var _splat_atlas_meshes: Array[ArrayMesh] = []
 
@@ -267,6 +393,14 @@ func _process(dt: float) -> void:
 		var a: float = _splat_age[i]
 		if a < 0.0:
 			continue
+		var host = _splat_follow[i]
+		if host != null:
+			if is_instance_valid(host):
+				_splats[i].global_transform = (host as Node3D).global_transform * _splat_local[i]
+			else:
+				_splats[i].visible = false
+				_splat_age[i] = -1.0
+				continue
 		a += dt
 		_splat_age[i] = a
 		if a >= SPLAT_LIFE:
@@ -276,6 +410,17 @@ func _process(dt: float) -> void:
 			var k: float = (SPLAT_LIFE - a) / 3.0
 			var s: float = _splat_base[i] * k
 			(_splats[i] as MeshInstance3D).scale = Vector3(s, s, s)
+	for i in _rings.size():
+		if _ring_t[i] >= 0.0:
+			_ring_t[i] += dt
+			var k: float = _ring_t[i] / 0.45
+			if k >= 1.0:
+				_rings[i].visible = false
+				_ring_t[i] = -1.0
+			else:
+				var rr: float = _ring_r[i] * (0.15 + 0.85 * k)
+				_rings[i].scale = Vector3(rr, rr * 0.25, rr)
+				((_rings[i].mesh as TorusMesh).material as StandardMaterial3D).albedo_color.a = 0.55 * (1.0 - k)
 	for i in _flash.size():
 		if _flash_t[i] > 0.0:
 			_flash_t[i] -= dt
@@ -284,7 +429,7 @@ func _process(dt: float) -> void:
 				f.visible = false
 			else:
 				var k2: float = _flash_t[i] / 0.22
-				f.scale = Vector3.ONE * lerpf(9.0, 3.0, k2)
+				f.scale = Vector3.ONE * lerpf(9.0, 3.0, k2) * _flash_k
 				((f.mesh as QuadMesh).material as StandardMaterial3D).albedo_color.a = k2
 
 # ----------------------------------------------------------------------------------------------- blood
@@ -299,7 +444,7 @@ func blood(pos: Vector3, dir: Vector3, strength: float = 1.0) -> void:
 
 ## Persistent blood mark on a surface: oriented to `normal` (ground, slope or wall), red-tinted Kenney splat shape,
 ## random rotation / size / red value. Ring buffer of SPLAT_POOL marks; the oldest is recycled, all fade after SPLAT_LIFE s.
-func splat(pos: Vector3, normal: Vector3 = Vector3.UP, size: float = 1.0) -> void:
+func splat(pos: Vector3, normal: Vector3 = Vector3.UP, size: float = 1.0, host: Node3D = null) -> void:
 	if not gore:
 		return
 	var i: int = _spi
@@ -315,7 +460,10 @@ func splat(pos: Vector3, normal: Vector3 = Vector3.UP, size: float = 1.0) -> voi
 	var by: Vector3 = n.cross(bx)
 	var basis := Basis(bx, by, n).rotated(n, randf() * TAU)
 	var k: float = size * randf_range(1.0, 2.0)
-	mi.global_transform = Transform3D(basis.scaled(Vector3(k, k, k)), pos + n * 0.07)
+	mi.global_transform = Transform3D(basis.scaled(Vector3(k, k, k)), pos + n * 0.04)
+	_splat_follow[i] = host
+	if host != null:
+		_splat_local[i] = host.global_transform.affine_inverse() * mi.global_transform     # stays glued to a wall chunk as it falls
 	mi.visible = true
 	_splat_age[i] = 0.0
 	_splat_base[i] = k
@@ -359,16 +507,24 @@ func sparks(pos: Vector3, dir: Vector3) -> void:
 
 ## Explosion: bright flash -> orange fireball puffs -> expanding charcoal smoke (+ a dust ring).
 func explosion(pos: Vector3, radius: float = 7.0) -> void:
-	var i: int = _boi
-	_boi = (_boi + 1) % _boom.size()
-	var s: float = clampf(radius / 7.0, 0.7, 1.8)
-	_burst(_boom[i], pos + Vector3(0, 0.6, 0), 4.0 * s, 11.0 * s)
-	_burst(_boom_smoke[i], pos + Vector3(0, 1.2, 0), 2.0 * s, 7.0 * s)
-	var f: MeshInstance3D = _flash[i]
-	f.global_position = pos + Vector3(0, 1.0, 0)
-	f.visible = true
-	_flash_t[i] = 0.22
-	dust(pos, 2.0)
+	var s: float = clampf(radius / 7.0, 0.7, 4.5)
+	_flash_k = minf(s, 3.0)
+	var puffs: int = 1 + int(s * 0.9)                      # big blasts fire several overlapping emitters spread across the radius
+	for k in puffs:
+		var i: int = _boi
+		_boi = (_boi + 1) % _boom.size()
+		var off := Vector3.ZERO
+		if k > 0:
+			off = Vector3(randf_range(-1, 1), 0.0, randf_range(-1, 1)).normalized() * radius * 0.35 * randf()
+		_burst(_boom[i], pos + off + Vector3(0, 0.6, 0), 4.0 * minf(s, 2.4), 11.0 * s)
+		_burst(_boom_smoke[i], pos + off + Vector3(0, 1.2, 0), 2.0 * minf(s, 2.4), 7.0 * s)
+		var f: MeshInstance3D = _flash[i]
+		f.global_position = pos + off + Vector3(0, 1.0, 0)
+		f.visible = true
+		_flash_t[i] = 0.22 + 0.06 * s
+	dust(pos, 2.0 * minf(s, 2.5))
+	if s > 1.3:
+		shockwave(pos, radius)
 
 # ----------------------------------------------------------------------------------------------- fire
 ## Persistent flame on something burning. `scale` ~ the burning object's size (a crate ~1, a house wall ~2.5).
@@ -431,4 +587,11 @@ func clear_all() -> void:
 	for i in _splats.size():
 		_splats[i].visible = false
 		_splat_age[i] = -1.0
+		_splat_follow[i] = null
+	for i in _craters.size():
+		_craters[i].visible = false
+		_crater_flame[i] = -1
+	for i in _rings.size():
+		_rings[i].visible = false
+		_ring_t[i] = -1.0
 	live_flames = 0

@@ -327,6 +327,50 @@ static func punch_walk(budget: float, costs: Array) -> Dictionary:
 		keep = clampf(sqrt(frac) * 0.6, 0.0, 0.6)
 	return {"n": n, "left": frac, "blocked": blocked, "keep": keep}
 
+# ----------------------------------------------------------------- cinematic slowdown (event driven, physics safe)
+## Time dilation (Engine.time_scale scales the fixed physics step, so the simulation stays stable) is triggered only by
+## significant destruction, never by distance, and never stacks: nearby events merge into one longer, stronger moment.
+const SLOWMO_MIN_SCALE := 0.24
+const SLOWMO_THRESHOLD := 0.3            # events lighter than this never slow the game
+const SLOWMO_MAX_HOLD := 1.5             # real seconds one merged moment can last at most
+const SLOWMO_RUN_BUDGET := 7.0           # real seconds of slow motion per run, so a long chain never drags the run
+
+## 0..1 weight of a destruction event: pieces broken, impact energy, blast radius.
+static func slowmo_weight(broken: int, effk: float, blast_radius: float = 0.0) -> float:
+	var w: float = clampf(float(broken) / 14.0, 0.0, 1.0) * clampf(effk / 60.0, 0.4, 1.0)
+	if blast_radius >= 9.0:
+		w = maxf(w, clampf((blast_radius - 6.0) / 22.0, 0.0, 1.0))
+	return clampf(w, 0.0, 1.0)
+
+static func slowmo_scale(w: float) -> float:
+	return lerpf(1.0, SLOWMO_MIN_SCALE, smoothstep(SLOWMO_THRESHOLD - 0.05, 1.0, w))
+
+static func slowmo_new() -> Dictionary:
+	return {"scale": 1.0, "w": 0.0, "start": -99.0, "until": -99.0, "spent": 0.0}
+
+## State machine step. `now` = real seconds, `dt` = real seconds since last step, `event_w` = weight of an event this step (0 = none).
+static func slowmo_step(s: Dictionary, now: float, dt: float, event_w: float) -> Dictionary:
+	if event_w >= SLOWMO_THRESHOLD and float(s["spent"]) < SLOWMO_RUN_BUDGET:
+		if now >= float(s["until"]):
+			s["w"] = event_w                          # a fresh moment
+			s["start"] = now
+		else:
+			s["w"] = maxf(float(s["w"]), event_w)     # merge into the running one (stronger, never a second dip)
+		var hold: float = 0.22 + 0.9 * float(s["w"])
+		s["until"] = minf(maxf(float(s["until"]), now + hold), float(s["start"]) + SLOWMO_MAX_HOLD)
+	var target: float = 1.0
+	if now < float(s["until"]) and float(s["spent"]) < SLOWMO_RUN_BUDGET:
+		target = slowmo_scale(float(s["w"]))
+	var cur: float = float(s["scale"])
+	var rate: float = 22.0 if target < cur else 3.2   # dive in fast, ease out slowly
+	cur = lerpf(cur, target, 1.0 - exp(-rate * dt))
+	if absf(cur - target) < 0.01:
+		cur = target
+	s["scale"] = clampf(cur, SLOWMO_MIN_SCALE, 1.0)
+	if cur < 0.95:
+		s["spent"] = float(s["spent"]) + dt
+	return s
+
 # ----------------------------------------------------------------- launch trajectory governor
 # v12 finding: a hard pull gave 46 deg at up to 72-95 m/s, i.e. a 300-500 m range and a 80-135 m apex: straight over the
 # whole city and into the world wall. v13: (1) the upward angle is SOFT-limited, (2) the ideal ballistic range and apex are

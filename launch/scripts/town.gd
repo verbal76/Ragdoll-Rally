@@ -1166,7 +1166,7 @@ func explode(center: Vector3, radius: float, power: float) -> Dictionary:
 	Destruction.collapse(self, released)
 	for c in blasts:
 		ignite_near(c, radius * 0.9, 0.75)
-	return {"released": released, "blasts": blasts}
+	return {"released": released, "blasts": blasts, "power": power, "radius": radius}
 
 ## Barrel the ragdoll just hit: detonate it (and its chain).
 func detonate(b: RigidBody3D) -> Dictionary:
