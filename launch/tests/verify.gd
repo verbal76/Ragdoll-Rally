@@ -56,16 +56,18 @@ func _run() -> void:
 	var maxf_: float = 0.0
 	var t0: int = Time.get_ticks_msec()
 	var i: int = 0
+	var max_x: float = -999.0           # furthest point reached (the end position includes any rebound off the house)
 	while main.state == 1 and i < 60 * 25:
 		await physics_frame
 		i += 1
+		max_x = maxf(max_x, main.ragdoll.centre().x)
 		if not main.ragdoll.is_finite_and_sane():
 			sane = false
 			print("insane at frame ", i, " ", main.ragdoll.centre())
 			break
 	print("sim: %d physics frames in %d ms; torso end %s" % [i, Time.get_ticks_msec() - t0, str(main.ragdoll.centre())])
 	check(sane, "ragdoll stays numerically sane")
-	check(main.ragdoll.centre().x > start.x + 8.0, "ragdoll travelled downrange")
+	check(max_x > start.x + 8.0, "ragdoll travelled downrange (furthest x %.1f)" % max_x)
 	check(main.state == 2, "flight settles into RESULT")
 	check(main.scoring.total() > 0, "score > 0 (%d) %s" % [main.scoring.total(), str(main.scoring.lines)])
 	var released: int = n_pieces - main.town.frozen_count()

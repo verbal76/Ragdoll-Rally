@@ -69,7 +69,7 @@ func _ready() -> void:
 	for i in 3:
 		_crumble.append(_puff_emitter(crumble_mesh, 12, 1.7, 2.0, 7.0, Vector3(0, 1.0, 0), 75.0, true, 1.2, 2.4))
 	var fire_mesh: Mesh = _puff_mesh(0.5, Color(1.0, 0.58, 0.12), 1.0)
-	var smoke_mesh: Mesh = _puff_mesh(0.55, Color(0.55, 0.55, 0.58), 0.0)
+	var smoke_mesh: Mesh = _puff_mesh(0.55, Color(0.78, 0.78, 0.80), 0.0)
 	for i in 4:
 		_boom.append(_puff_emitter(fire_mesh, 14, 0.7, 5.0, 13.0, Vector3(0, 1.5, 0), 180.0, true, 0.9, 2.0))
 		_boom_smoke.append(_puff_emitter(smoke_mesh, 14, 2.3, 2.0, 8.0, Vector3(0, 2.2, 0), 180.0, true, 1.2, 2.6))
@@ -116,13 +116,13 @@ func _ready() -> void:
 		add_child(f)
 		_flames.append(f)
 		_flame_user.append(0)
-	var fsmoke_mesh: Mesh = _puff_mesh(0.36, Color(0.50, 0.50, 0.54), 0.0)
+	var fsmoke_mesh: Mesh = _puff_mesh(0.36, Color(0.62, 0.62, 0.66), 0.0)
 	for i in FLAME_SMOKE_POOL:
 		var s := _puff_emitter(fsmoke_mesh, 5, 2.4, 1.0, 2.2, Vector3(0, 1.8, 0), 18.0, false, 0.8, 1.9)
 		s.emitting = false
 		s.visible = false
 		_flame_smoke.append(s)
-	var burn_mesh: Mesh = _puff_mesh(0.5, Color(0.66, 0.66, 0.68), 0.0)
+	var burn_mesh: Mesh = _puff_mesh(0.5, Color(0.80, 0.80, 0.82), 0.0)
 	for i in SMOKE_POOL:
 		var s2 := _puff_emitter(burn_mesh, 8, 2.6, 1.0, 3.0, Vector3(0, 1.6, 0), 28.0, true, 1.0, 2.2)
 		_smoke.append(s2)
@@ -191,7 +191,7 @@ func _puff_mesh(radius: float, col: Color, emissive: float) -> Mesh:
 	if emissive < 0.5:
 		var o := ShaderMaterial.new()
 		o.shader = _outline_shader
-		o.set_shader_parameter("outline_width", 0.7)
+		o.set_shader_parameter("outline_width", 0.55)
 		o.set_shader_parameter("outline_color", Color(0.10, 0.10, 0.12))
 		m.next_pass = o
 	sm.material = m
