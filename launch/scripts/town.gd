@@ -7,6 +7,7 @@ extends Node3D
 const Rules := preload("res://scripts/rules.gd")
 const Cities := preload("res://scripts/cities.gd")
 const Hillside := preload("res://scripts/hillside.gd")
+const Destruction := preload("res://scripts/destruction.gd")
 
 signal piece_released(piece: RigidBody3D)
 signal ignited(node: Node3D, pos: Vector3)
@@ -20,7 +21,9 @@ const POLE_Z := 1.7
 const WORLD_X_MIN := -25.0
 const WORLD_X_MAX := 215.0
 const WORLD_Z := 130.0
-const ACTIVE_CAP := 90          # max simultaneously simulated released pieces
+const ACTIVE_CAP := 140         # settled released pieces beyond this are re-frozen (aftermath stays visible)
+const ACTIVE_HARD := 170        # never more than this many simulated pieces: extra broken pieces dissolve into particle debris
+var shells_open: Array[RigidBody3D] = []   # expanded shells (Destruction.expand), restored on reset
 
 var pieces: Array[RigidBody3D] = []
 var props: Array[RigidBody3D] = []
@@ -441,6 +444,48 @@ func frozen_count() -> int:
 			n += 1
 	return n
 
+
+# ------------------------------------------------------------- destruction support (see destruction.gd)
+func cell_register(cb: RigidBody3D) -> void:
+	if bool(Rules.MATERIALS[str(cb.get_meta("mat", "masonry"))]["fire"]):
+		register_combustible(cb)
+
+func fire_state_of(n: Node) -> int:
+	var id: int = n.get_instance_id()
+	return fire_state[int(_fire_idx[id])] if _fire_idx.has(id) else 0
+
+## A shell that has been replaced by cells stops being fuel itself.
+func fire_retire(n: Node) -> void:
+	var id: int = n.get_instance_id()
+	if not _fire_idx.has(id):
+		return
+	var i: int = int(_fire_idx[id])
+	if fire_state[i] == 1:
+		if fx and fire_handle[i] >= 0:
+			fx.flame_stop(fire_handle[i])
+			fire_handle[i] = -1
+		burning_count = maxi(burning_count - 1, 0)
+	fire_state[i] = 2
+
+func fire_unretire(n: Node) -> void:
+	var id: int = n.get_instance_id()
+	if _fire_idx.has(id):
+		fire_state[int(_fire_idx[id])] = 0
+
+## Over-budget broken pieces never become rigid bodies: they vanish in a burst of pooled debris (fake the impossible).
+func dissolve(p: RigidBody3D, vel: Vector3) -> void:
+	if p.get_meta("dissolved", false):
+		return
+	p.set_meta("dissolved", true)
+	p.set_meta("capped", true)
+	p.collision_layer = 0
+	p.visible = false
+	_spawn_debris(p.global_position, vel * 0.6, 4)
+	var id: int = p.get_instance_id()
+	if _fire_idx.has(id):
+		fire_retire(p)
+	piece_released.emit(p)
+
 func release(p: RigidBody3D, vel: Vector3) -> void:
 	if not p.freeze:
 		return
@@ -717,7 +762,13 @@ func _filler() -> void:
 
 ## Fast reset: put every piece/prop back where it was instead of rebuilding ~400 nodes.
 func reset_in_place() -> void:
+	Destruction.restore_all(self)
 	for p in pieces:
+		if p.get_meta("dissolved", false):
+			p.set_meta("dissolved", false)
+			p.visible = true
+			p.collision_layer = 4
+		p.collision_layer = 4
 		p.freeze_mode = RigidBody3D.FREEZE_MODE_STATIC
 		p.freeze = true
 		p.remove_meta("capped")
@@ -910,7 +961,7 @@ func _make_debris_pool() -> void:
 	for i in 140:
 		var d := RigidBody3D.new()
 		d.collision_layer = 0
-		d.collision_mask = 1 | 4
+		d.collision_mask = 1                 # debris only touches the ground: it is a visual shower, not simulation load
 		d.mass = 0.8
 		d.freeze = true
 		d.visible = false
@@ -1069,7 +1120,15 @@ func explode(center: Vector3, radius: float, power: float) -> Dictionary:
 		guard += 1
 		var c: Vector3 = queue.pop_front()
 		blasts.append(c)
-		for p in pieces:
+		var opened := 0
+		for sh in pieces.duplicate():                       # buildings in the blast come apart into cells first
+			if opened >= 10 or shells_open.size() >= Destruction.MAX_EXPANDED_SHELLS:
+				break
+			if Destruction.is_shell(sh) and sh.global_position.distance_to(c) <= radius * 0.9 + 4.0:
+				Destruction.expand(self, sh)
+				opened += 1
+		var rel_n := 0
+		for p in pieces.duplicate():
 			if p.get_meta("capped", false):
 				continue
 			var d: float = p.global_position.distance_to(c)
@@ -1078,8 +1137,13 @@ func explode(center: Vector3, radius: float, power: float) -> Dictionary:
 			var dir: Vector3 = ((p.global_position - c) + Vector3(0, 0.6 * radius * 0.2, 0)).normalized()
 			var f: float = 1.0 - d / radius
 			if p.freeze:
-				release(p, dir * power * (0.35 + 0.65 * f) + Vector3(0, 4.0, 0))
-				released.append(p)
+				var bv: Vector3 = dir * power * (0.35 + 0.65 * f) * float(Destruction.profile(str(p.get_meta("mat", "masonry")))["impulse"]) + Vector3(0, 4.0, 0)
+				if rel_n < Destruction.MAX_RELEASE_PER_IMPACT * 2 and active_released() + rel_n < ACTIVE_HARD:
+					release(p, bv)
+					released.append(p)
+					rel_n += 1
+				else:
+					dissolve(p, bv)
 			else:
 				p.apply_central_impulse(dir * power * 0.4 * f * p.mass)
 		for b in props:
@@ -1097,6 +1161,7 @@ func explode(center: Vector3, radius: float, power: float) -> Dictionary:
 				b.collision_layer = 0
 				b.freeze = true
 				queue.append(b.global_position)
+	Destruction.collapse(self, released)
 	for c in blasts:
 		ignite_near(c, radius * 0.9, 0.75)
 	return {"released": released, "blasts": blasts}

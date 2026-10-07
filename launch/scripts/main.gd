@@ -3,6 +3,7 @@ extends Node3D
 ## States: AIM (drag back) -> FLIGHT (launched, until settled) -> RESULT.
 
 const Rules := preload("res://scripts/rules.gd")
+const Destruction := preload("res://scripts/destruction.gd")
 const Fx := preload("res://scripts/fx.gd")
 const SelectUI := preload("res://scripts/select_ui.gd")
 
@@ -928,7 +929,8 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 			mat = "glass"
 	elif other.has_meta("kind") and other is RigidBody3D and (other as RigidBody3D).freeze:
 		var piece := other as RigidBody3D
-		var released: Array[RigidBody3D] = town.smash(piece, pos, vdir, eff * float(fxp["destruct_mult"]))
+		var pr: Dictionary = Destruction.punch(town, piece, pos, vdir, eff * float(fxp["destruct_mult"]), town.smash_push)
+		var released: Array = (pr["released"] as Array) + (pr["dissolved"] as Array)
 		if released.size() > 0:
 			var dmg: int = 0
 			for rp in released:
@@ -937,14 +939,15 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 					dmg += pts
 			scoring.awarded.emit("SMASH x%d" % released.size(), dmg, pos)
 			var m0: String = str(piece.get_meta("mat", "masonry"))
-			fx.debris(m0, pos, vdir, 0.8 + sev + 0.3 * float(levels.get("destruction", 0)))
+			var dl: int = int(levels.get("destruction", 0))
+			fx.debris(m0, pos, vdir, 0.8 + sev + 0.15 * float(dl))
 			if released.size() >= 3:
-				fx.crumble(pos, clampf(float(released.size()) / 6.0, 0.6, 2.0))
+				fx.crumble(pos, clampf(float(released.size()) / 6.0, 0.6, 2.5))
 			if released.size() > 4:
 				fx.debris(m0, (released[released.size() - 1] as Node3D).global_position, vdir, 1.0)
 			sfx.play(str((Rules.MATERIALS.get(m0, Rules.MATERIALS["masonry"]) as Dictionary)["sound"]), 0.0, randf_range(0.8, 1.1))
 			pass_through = true
-			keep = 0.82 + 0.02 * float(levels.get("power", 0))
+			keep = maxf(float(pr["keep"]), 0.3)
 			mat = m0
 	elif other.has_meta("decor"):
 		if speed > 5.0 and town.break_decor(other as StaticBody3D, vdir, speed):
@@ -1030,7 +1033,7 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 					_lose_limb(cand, n, speed, cand.global_position)
 	if Rules.explosive_impact(speed, fxp, randf()) and now - _last_boom > 0.6:
 		_last_boom = now
-		var res: Dictionary = town.explode(pos, 7.0, 20.0)
+		var res: Dictionary = town.explode(pos, maxf(float(fxp["explode_radius"]), 7.0), maxf(float(fxp["explode_power"]), 20.0))
 		_apply_blast_result(res, "boomimpact_%d" % int(now * 10.0), pos)
 	var ign: int = int(fxp.get("ignition", 0))
 	if ign > 0 and speed >= float(fxp["ignite_speed"]) and not ragdoll.is_burning("torso"):

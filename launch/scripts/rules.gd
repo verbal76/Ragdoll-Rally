@@ -295,17 +295,37 @@ static func crater_tier(level: int) -> int:
 static func impact_energy(mass: float, speed: float) -> float:
 	return 0.5 * mass * speed * speed
 
-## Penetration model. `energy` is the attacker's impact energy times destruct_k; `strength` is the structure's resistance
-## (sum for the layers it crosses). Returns {"depth": 0..1+ of strength overcome, "pierce": bool, "keep": momentum fraction kept}.
-static func penetration(energy: float, strength: float) -> Dictionary:
-	var ratio: float = energy / maxf(strength, 0.001)
-	var pierce: bool = ratio >= 1.0
-	var keep: float = 0.0
-	if pierce:
-		keep = clampf(1.0 - 1.0 / (1.0 + ratio * 0.5) * 0.9, 0.35, 0.97)    # overwhelming energy loses little speed
-	else:
-		keep = 0.0                                                               # blocked: normal bounce/ricochet path
-	return {"ratio": ratio, "pierce": pierce, "keep": keep}
+## Impact-energy model for structures. An impact brings `budget = (speed * impact_power * destruct_k)^2`. Each piece along the
+## ragdoll's path costs `PUNCH_COST_K * tough^2` (weaker pieces are cheaper). The ragdoll breaks through pieces in order until
+## the budget cannot pay for the next one (blocked -> normal bounce/ricochet) or the path ends (it exits the structure).
+## What is left decides the momentum it keeps: overwhelming energy loses almost nothing, marginal energy loses most of it.
+const PUNCH_COST_K := 28.0
+
+static func piece_cost(tough: float) -> float:
+	return PUNCH_COST_K * tough * tough
+
+static func punch_budget(effk: float) -> float:
+	return effk * effk
+
+## costs: piece costs ordered along the path. Returns {"n": pieces broken, "left": remaining budget fraction 0..1,
+## "blocked": bool (ran out before the path ended), "keep": momentum fraction the ragdoll keeps}.
+static func punch_walk(budget: float, costs: Array) -> Dictionary:
+	var start: float = maxf(budget, 0.001)
+	var left: float = start
+	var n: int = 0
+	var blocked: bool = false
+	for c in costs:
+		var cost: float = float(c)
+		if left < cost * 0.5:
+			blocked = true
+			break
+		left = maxf(left - cost, 0.0)
+		n += 1
+	var frac: float = left / start
+	var keep: float = clampf(sqrt(frac), 0.25, 0.985)
+	if blocked:
+		keep = clampf(sqrt(frac) * 0.6, 0.0, 0.6)
+	return {"n": n, "left": frac, "blocked": blocked, "keep": keep}
 
 # ----------------------------------------------------------------- launch trajectory governor
 # v12 finding: a hard pull gave 46 deg at up to 72-95 m/s, i.e. a 300-500 m range and a 80-135 m apex: straight over the

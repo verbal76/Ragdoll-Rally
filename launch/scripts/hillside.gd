@@ -7,6 +7,7 @@ extends RefCounted
 
 const Rules := preload("res://scripts/rules.gd")
 const Terrain := preload("res://scripts/terrain.gd")
+const Destruction := preload("res://scripts/destruction.gd")
 
 const ROAD_W := 7.0
 const WALK := 1.3
@@ -370,13 +371,10 @@ static func _kit_mat(c: Ctx, tint: Color, variant: int) -> StandardMaterial3D:
 
 ## Unit-space building mesh from kit cubes: nw x nd cells, `fv` floors, roof (0 gable, 1 flat, 2 none). Footprint centred on the origin,
 ## base at y = 0, one cell = 1 x 0.625 x 1 (the instance is scaled to the lot). Cached by shape.
-static func _unit_mesh(nw: int, nd: int, fv: int, roof: int, vs: int) -> Mesh:
-	var key: String = "%d_%d_%d_%d_%d" % [nw, nd, fv, roof, vs % 7]
-	if _unit_meshes.has(key):
-		return _unit_meshes[key]
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var first: Mesh = _km("building-block")
+## Cell plan of a kit building in unit space (shared by the combined mesh and by the destruction shell): one entry per kit cube /
+## roof piece: {name, rot, pos (base centre), idx (column i, floor f, column k), kind}.
+static func _unit_plan(nw: int, nd: int, fv: int, roof: int, vs: int) -> Array:
+	var out: Array = []
 	var upper: Array[String] = ["building-window", "building-windows", "building-windows-sills", "building-window", "building-windows", "building-window-balcony"]
 	var ground: Array[String] = ["building-door-window", "building-door", "building-door-window", "building-window"]
 	for f in fv:
@@ -402,22 +400,43 @@ static func _unit_mesh(nw: int, nd: int, fv: int, roof: int, vs: int) -> Mesh:
 					nm = upper[h % upper.size()]
 					if nm == "building-window-balcony" and f < 1:
 						nm = "building-window"
-				st.append_from(_km(nm), 0, Transform3D(Basis(Vector3.UP, rot), Vector3(cx, float(f) * CELL_H, cz)))
+				out.append({"name": nm, "rot": rot, "pos": Vector3(cx, float(f) * CELL_H, cz), "idx": Vector3i(i, f, k), "kind": "wall"})
 	var ytop: float = float(fv) * CELL_H
-	if roof == 0:
+	if roof == 0 or roof == 1:
 		var along_x: bool = nw >= nd
 		for i in nw:
 			for k in nd:
-				var cx2: float = float(i) - float(nw - 1) * 0.5
-				var cz2: float = float(k) - float(nd - 1) * 0.5
-				st.append_from(_km("roof-gable"), 0, Transform3D(Basis(Vector3.UP, 0.0 if along_x else PI * 0.5), Vector3(cx2, ytop, cz2)))
-	elif roof == 1:
-		for i in nw:
-			for k in nd:
-				st.append_from(_km("roof-flat-top"), 0, Transform3D(Basis.IDENTITY, Vector3(float(i) - float(nw - 1) * 0.5, ytop, float(k) - float(nd - 1) * 0.5)))
+				out.append({"name": "roof-gable" if roof == 0 else "roof-flat-top", "rot": (0.0 if along_x else PI * 0.5) if roof == 0 else 0.0,
+					"pos": Vector3(float(i) - float(nw - 1) * 0.5, ytop, float(k) - float(nd - 1) * 0.5), "idx": Vector3i(i, fv, k), "kind": "roof"})
+	return out
+
+static func _unit_mesh(nw: int, nd: int, fv: int, roof: int, vs: int) -> Mesh:
+	var key: String = "%d_%d_%d_%d_%d" % [nw, nd, fv, roof, vs % 7]
+	if _unit_meshes.has(key):
+		return _unit_meshes[key]
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for e in _unit_plan(nw, nd, fv, roof, vs):
+		st.append_from(_km(str(e["name"])), 0, Transform3D(Basis(Vector3.UP, float(e["rot"])), e["pos"]))
 	var m: ArrayMesh = st.commit()
 	_unit_meshes[key] = m
 	return m
+
+## Destruction cells of a kit building segment (called lazily by Destruction.expand). `size` = the shell's box, `sc` = the kit scale
+## applied to the unit mesh, `roof_unit` = roof height in unit space.
+static func _kit_cells(nw: int, nd: int, fv: int, roof: int, vs: int, sc: Vector3, size: Vector3, kmat: Material, roof_unit: float, seg_roof: bool) -> Array:
+	var out: Array = []
+	for e in _unit_plan(nw, nd, fv, roof, vs):
+		var up: Vector3 = e["pos"]
+		var is_roof: bool = str(e["kind"]) == "roof"
+		var ch: float = (roof_unit if is_roof else CELL_H) * sc.y
+		var base_y: float = -size.y * 0.5 + up.y * sc.y
+		out.append({
+			"off": Vector3(up.x * sc.x, base_y + ch * 0.5, up.z * sc.z),
+			"size": Vector3(sc.x, ch, sc.z),
+			"mesh": _km(str(e["name"])), "moff": Vector3(0, -ch * 0.5, 0), "mrot": float(e["rot"]), "mscale": sc,
+			"mat": kmat, "idx": e["idx"], "kind": e["kind"]})
+	return out
 
 ## A breakable frozen block with a window-textured (or flat) look, rotated by yaw. Same bookkeeping as Town._block.
 static func _hblock(c: Ctx, pos: Vector3, size: Vector3, yaw: float, col: Color, mat_name: String, group: String, mass: float, tough: float, windows: bool = true, group_all: bool = false, kit: Dictionary = {}) -> RigidBody3D:
@@ -577,6 +596,8 @@ static func _building(c: Ctx, center: Vector2, w: float, d: float, yaw: float, f
 		var kit: Dictionary = {"mesh": um, "mat": kmat, "scale": Vector3(w / float(nwc), sy, d / float(ndc))}
 		var pos := Vector3(center.x, y + seg_h * 0.5, center.y)
 		var b: RigidBody3D = _hblock(c, pos, Vector3(w, seg_h, d), fyaw, col, mat, grp, 3.0 + seg_h * w * d * 0.012, 6.0 if mat == "masonry" else 4.2, true, false, kit)
+		var seg_roof_kind: int = roof_kind if is_top else 2
+		Destruction.register_shell(b, _kit_cells.bind(nwc, ndc, f_seg, seg_roof_kind, vs, kit["scale"], Vector3(w, seg_h, d), kmat, roof_unit, is_top), nwc * ndc * (f_seg + (1 if seg_roof_kind < 2 else 0)))
 		if first == null:
 			first = b
 		if is_top:
