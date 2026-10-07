@@ -6,6 +6,7 @@ extends Node3D
 
 const Rules := preload("res://scripts/rules.gd")
 const Cities := preload("res://scripts/cities.gd")
+const Hillside := preload("res://scripts/hillside.gd")
 
 signal piece_released(piece: RigidBody3D)
 signal ignited(node: Node3D, pos: Vector3)
@@ -59,6 +60,7 @@ var _burnt_static: Array[Node3D] = []
 var glass: Array[StaticBody3D] = []
 var _broken_glass: Array[StaticBody3D] = []
 var env_id: String = "city"
+var terrain = null                      # terrain.gd instance on the hillside cities (null = flat world at y = 0)
 var ground_color: Color = Color(0.40, 0.66, 0.34)
 var road_color: Color = Color(0.62, 0.58, 0.5)
 var _mat_cache: Dictionary = {}
@@ -77,8 +79,14 @@ func build(p_legacy: bool = false, p_env: String = "city") -> void:
 		var th: Dictionary = Rules.env_by_id(env_id)["theme"]
 		ground_color = th["ground"]
 		road_color = th.get("road", road_color)
-	_ground()
+	if not (not legacy and Rules.is_hill(env_id)):
+		_ground()
 	_launcher()
+	if not legacy and Rules.is_hill(env_id):
+		smash_push = 0.9
+		Hillside.build(self, env_id)
+		_perimeter()
+		return
 	if env_id == "yard" and not legacy:
 		build_yard()
 		_perimeter()
@@ -155,6 +163,13 @@ func _ground() -> void:
 	var road := _box_mesh(Vector3(70 if legacy else 230, 0.05, 6), road_color)
 	road.position = Vector3(36 if legacy else 90, 0.02, 0)
 	add_child(road)
+
+## Ground height under (x, z): 0 on the flat cities, the terrain height on the hillside cities.
+func ground_y(x: float, z: float) -> float:
+	return terrain.height(x, z) if terrain != null else 0.0
+
+func ground_normal(x: float, z: float) -> Vector3:
+	return terrain.normal(x, z) if terrain != null else Vector3.UP
 
 func _launcher() -> void:
 	var wood := Color(0.55, 0.34, 0.18)
@@ -1121,6 +1136,14 @@ func ignite_node(n: Node3D) -> bool:
 		return false
 	return _ignite_idx(int(_fire_idx[id]))
 
+## Flame size from the burning object's collision box (a crate ~1, a house wall / building ~2-3).
+func _fire_scale(n: Node3D) -> float:
+	for ch in n.get_children():
+		if ch is CollisionShape3D and (ch as CollisionShape3D).shape is BoxShape3D:
+			var sz: Vector3 = ((ch as CollisionShape3D).shape as BoxShape3D).size
+			return clampf(pow(maxf(sz.x * sz.y * sz.z, 0.01), 1.0 / 3.0) * 0.55, 0.7, 3.0)
+	return 1.0
+
 func _ignite_idx(i: int) -> bool:
 	if fire_state[i] != 0 or burning_count >= Rules.FIRE_CAP:
 		return false
@@ -1130,7 +1153,7 @@ func _ignite_idx(i: int) -> bool:
 	var n: Node3D = fire_nodes[i]
 	var pos: Vector3 = n.global_position + Vector3(0, 1.0, 0)
 	if fx:
-		fire_handle[i] = fx.flame_start(pos, n.get_instance_id())
+		fire_handle[i] = fx.flame_start(pos, n.get_instance_id(), _fire_scale(n))
 	ignited.emit(n, pos)
 	return true
 
@@ -1156,7 +1179,7 @@ func _fire_tick(dt: float) -> void:
 		var n: Node3D = fire_nodes[i]
 		var pos: Vector3 = n.global_position + Vector3(0, 1.0, 0)
 		if fx:
-			fire_handle[i] = fx.flame_start(pos, n.get_instance_id())
+			fire_handle[i] = fx.flame_start(pos, n.get_instance_id(), _fire_scale(n))
 		ignited.emit(n, pos)
 	for i in (res["burnt"] as Array):
 		_burn_out(int(i))

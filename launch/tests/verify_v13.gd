@@ -26,7 +26,7 @@ func _gesture(b: float, sd: float, lv: Dictionary) -> Dictionary:
 	if p.length() > Main.OVERDRIVE_MAX:
 		p = p.normalized() * Main.OVERDRIVE_MAX
 	var power: float = p.length()
-	var up: float = clampf(p.y, 0.05, 1.0) * 1.05
+	var up: float = clampf(p.y, 0.05, 1.0) * Rules.AIM_ELEV_GAIN
 	var side: float = -clampf(p.x, -1.0, 1.0) * Main.SIDE_GAIN
 	var dir: Vector3 = Rules.launch_dir(Vector3(1.0, 0.0, side), up / sqrt(1.0 + side * side))
 	var fx: Dictionary = Rules.effective(Rules.CHARACTERS[0]["stats"], lv)

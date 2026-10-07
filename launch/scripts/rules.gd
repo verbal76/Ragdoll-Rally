@@ -55,7 +55,42 @@ static func stat_pips(v: int) -> String:
 # ----------------------------------------------------------------- environments
 # `playable` cities are validated by tests/verify_cities.gd before they are enabled. `tag` is shown next to the name
 # ("TRAINING" for the Test Yard). `theme` tints the sky/ground so every city looks like its own place.
+# v14: the rising hillside cities. Ragnar launches from the low point of a hillside city that climbs toward him.
+# rise = height of the far end (m), side = extra rise at the lateral edges (bowl), valley = depth of a central channel,
+# ridge = noise relief (m), dh = vertical spacing of the contour streets (m), density 0..1, tall = 0..1 share of tall buildings.
+const HILLS: Array[Dictionary] = [
+	{"id": "hill_steep", "name": "HILLSIDE DISTRICT", "seed": 7101, "rise": 30.0, "side": 18.0, "valley": 0.0, "valley_w": 40.0, "ridge": 3.2,
+		"dh": 5.0, "density": 0.92, "tall": 0.08, "park": 0.10, "hub_x": 96.0, "hub_z": -30.0, "tower_x": 128.0, "tower_z": 26.0},
+	{"id": "hill_valley", "name": "VALLEY NEIGHBORHOODS", "seed": 7202, "rise": 24.0, "side": 30.0, "valley": 9.0, "valley_w": 38.0, "ridge": 2.6,
+		"dh": 5.6, "density": 0.82, "tall": 0.05, "park": 0.16, "hub_x": 84.0, "hub_z": 40.0, "tower_x": 118.0, "tower_z": -34.0},
+	{"id": "hill_rolling", "name": "ROLLING HEIGHTS", "seed": 7303, "rise": 18.0, "side": 14.0, "valley": 0.0, "valley_w": 40.0, "ridge": 5.5,
+		"dh": 5.8, "density": 0.68, "tall": 0.04, "park": 0.26, "hub_x": 104.0, "hub_z": 10.0, "tower_x": 132.0, "tower_z": -40.0},
+	{"id": "hill_skyline", "name": "SKYLINE HILL", "seed": 7404, "rise": 26.0, "side": 22.0, "valley": 4.0, "valley_w": 34.0, "ridge": 2.8,
+		"dh": 5.2, "density": 0.88, "tall": 0.34, "park": 0.08, "hub_x": 92.0, "hub_z": 0.0, "tower_x": 126.0, "tower_z": 30.0},
+]
+
+static func is_hill(id: String) -> bool:
+	return id.begins_with("hill_")
+
+static func hill_by_id(id: String) -> Dictionary:
+	for h in HILLS:
+		if str(h["id"]) == id:
+			return h
+	return HILLS[0]
+
 const ENVIRONMENTS: Array[Dictionary] = [
+	{"id": "hill_steep", "name": "HILLSIDE DISTRICT", "playable": true, "tag": "",
+		"desc": "Steep, dense hillside neighborhoods climbing toward you. Crash deeper into the city as the streets rise.",
+		"theme": {"sky_top": Color(0.34, 0.58, 0.88), "sky_hz": Color(0.86, 0.90, 0.95), "ground": Color(0.55, 0.58, 0.34), "road": Color(0.24, 0.24, 0.26)}},
+	{"id": "hill_valley", "name": "VALLEY NEIGHBORHOODS", "playable": true, "tag": "",
+		"desc": "A developed valley with neighborhoods climbing both sides. A longer corridor down the middle.",
+		"theme": {"sky_top": Color(0.40, 0.62, 0.90), "sky_hz": Color(0.93, 0.89, 0.80), "ground": Color(0.58, 0.60, 0.36), "road": Color(0.24, 0.24, 0.26)}},
+	{"id": "hill_rolling", "name": "ROLLING HEIGHTS", "playable": true, "tag": "",
+		"desc": "Broad rolling hills, parks and lower-density streets. Long skips between neighborhoods.",
+		"theme": {"sky_top": Color(0.30, 0.60, 0.92), "sky_hz": Color(0.88, 0.93, 0.98), "ground": Color(0.50, 0.62, 0.34), "road": Color(0.26, 0.26, 0.28)}},
+	{"id": "hill_skyline", "name": "SKYLINE HILL", "playable": true, "tag": "",
+		"desc": "A dense core of tall towers built into an elevated hillside. Smash up through the skyline.",
+		"theme": {"sky_top": Color(0.28, 0.44, 0.74), "sky_hz": Color(0.82, 0.86, 0.92), "ground": Color(0.50, 0.52, 0.36), "road": Color(0.22, 0.22, 0.25)}},
 	{"id": "downtown", "name": "DOWNTOWN", "playable": true, "tag": "",
 		"desc": "Skyscraper canyons. Glass fronts, rooftop tanks, billboards, long drops. Think vertical.",
 		"theme": {"sky_top": Color(0.20, 0.33, 0.62), "sky_hz": Color(0.72, 0.78, 0.9), "ground": Color(0.30, 0.31, 0.34), "road": Color(0.14, 0.14, 0.16)}},
@@ -181,6 +216,7 @@ static func effective(stats: Dictionary, lv: Dictionary) -> Dictionary:
 # SOFT-capped so no gesture can leave the playfield. Normal throws are untouched; only extremes are compressed.
 const RAGDOLL_GRAVITY_SCALE := 1.8
 const BASE_GRAVITY := 9.8
+const AIM_ELEV_GAIN := 0.62              # v14: gesture elevation gain (v13: 1.05). Pivot launches are ~12 deg flatter at the same power.
 const SOFT_PITCH_START_DEG := 28.0        # at or below this the gesture's pitch passes through unchanged
 const MAX_PITCH_DEG := 40.0               # absolute ceiling for any gesture (approached asymptotically, never reached)
 const MIN_PITCH_DEG := 3.0

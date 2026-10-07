@@ -771,7 +771,7 @@ func _update_aim() -> void:
 	if p.length() > OVERDRIVE_MAX:
 		p = p.normalized() * OVERDRIVE_MAX
 	aim_power = p.length()                                # 0..1 = the old power range, 1..1.45 = overdrive
-	var up: float = clampf(p.y, 0.05, 1.0) * (1.6 if classic else 1.05)   # classic = G1/G2 elevation; pivot launches flatter and faster
+	var up: float = clampf(p.y, 0.05, 1.0) * (1.6 if classic else Rules.AIM_ELEV_GAIN)   # classic = G1/G2 elevation; pivot launches flatter and faster
 	var side: float = -clampf(p.x, -1.0, 1.0) * SIDE_GAIN
 	if classic:
 		aim_dir = Vector3(1.0, up, side).normalized()
@@ -801,6 +801,10 @@ static func speed_for_power(p: float, cls: bool = false) -> float:
 static func air_drag_scale(p: float) -> float:
 	return clampf(1.0 - (p - 1.0) / (OVERDRIVE_MAX - 1.0), 0.0, 1.0)
 
+## Height above the terrain (the world is flat, y = 0, in the older cities).
+func _agl(p: Vector3) -> float:
+	return p.y - (town.ground_y(p.x, p.z) if is_instance_valid(town) else 0.0)
+
 func launch_speed() -> float:
 	var v: float = speed_for_power(aim_power, classic) * (1.0 if classic else float(fxp.get("launch_mult", 1.0)))
 	if classic:
@@ -816,7 +820,7 @@ func _update_preview() -> void:
 		var t: float = 0.13 * float(i + 1)
 		var pos: Vector3 = p0 + v * t + Vector3(0, -0.5 * g * (1.0 if classic else 1.8) * t * t, 0)
 		_dots[i].global_position = pos
-		_dots[i].visible = pos.y > 0.1 and aim_power >= MIN_POWER
+		_dots[i].visible = _agl(pos) > 0.1 and aim_power >= MIN_POWER
 
 ## Fire with the current aim (also used by tests).
 func fire() -> void:
@@ -856,7 +860,7 @@ func _on_impact(part: RigidBody3D, other: Node, speed: float, pos: Vector3) -> v
 ## Everything in the playgrounds is a box, so the normal comes from the box faces.
 func _surface_normal(other: Node, pos: Vector3, vin: Vector3) -> Vector3:
 	if other.has_meta("ground"):
-		return Vector3.UP
+		return town.ground_normal(pos.x, pos.z) if is_instance_valid(town) else Vector3.UP
 	var n: Vector3 = Vector3.ZERO
 	var half: Vector3 = Vector3.ZERO
 	var xf: Transform3D = Transform3D.IDENTITY
@@ -933,6 +937,8 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 			scoring.awarded.emit("SMASH x%d" % released.size(), dmg, pos)
 			var m0: String = str(piece.get_meta("mat", "masonry"))
 			fx.debris(m0, pos, vdir, 0.8 + sev + 0.3 * float(levels.get("destruction", 0)))
+			if released.size() >= 3:
+				fx.crumble(pos, clampf(float(released.size()) / 6.0, 0.6, 2.0))
 			if released.size() > 4:
 				fx.debris(m0, (released[released.size() - 1] as Node3D).global_position, vdir, 1.0)
 			sfx.play(str((Rules.MATERIALS.get(m0, Rules.MATERIALS["masonry"]) as Dictionary)["sound"]), 0.0, randf_range(0.8, 1.1))
@@ -1058,16 +1064,17 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 			trauma = maxf(trauma, 0.6)
 			cam_event = maxf(cam_event, 0.5)
 			fx.debris(mat, pos, n, 1.0)
+			fx.dust(pos, 1.3)
 			fx.blood(pos, n, 1.0)
 			if n.y > 0.7:
-				fx.splat(pos, 0.8)
+				fx.splat(pos, n, 0.8)
 			_burst(pos)
 		"extreme":
 			trauma = maxf(trauma, 0.95)
 			cam_event = maxf(cam_event, 1.0)
 			fx.debris(mat, pos, n, 1.6)
 			fx.blood(pos, n, 1.8)
-			fx.splat(pos, 1.2)
+			fx.splat(pos, n, 1.2)
 			_burst(pos)
 
 ## The world edge is NOT a destructive surface. Touching it ends the throw cleanly: no blood, limbs, explosions or score
@@ -1090,8 +1097,8 @@ func _lose_limb(part: RigidBody3D, n: Vector3, speed: float, pos: Vector3) -> vo
 		return
 	limbs_lost += 1
 	fx.blood(pos, n, 1.4)
-	if pos.y < 1.6:
-		fx.splat(pos, 0.9)
+	if _agl(pos) < 1.6:
+		fx.splat(Vector3(pos.x, town.ground_y(pos.x, pos.z), pos.z), town.ground_normal(pos.x, pos.z), 0.9)
 	scoring.award("limb_%d" % b.get_instance_id(), "LIMB LOST!", 150, "Carnage", pos)
 	sfx.play("limb", 0.0, randf_range(0.9, 1.2))
 	trauma = maxf(trauma, 0.7)
@@ -1317,13 +1324,13 @@ func _physics_process(dt: float) -> void:
 	_prev_x = c.x
 	var now: float = flight_t
 	var spd: float = ragdoll.max_speed() if classic else ragdoll.motion_speed()
-	if not classic and ragdoll.torso.global_position.y > 0.9:
+	if not classic and _agl(ragdoll.torso.global_position) > 0.9:
 		_air_since_skip = true
 	var oob: bool = c.y < -20.0 or c.x > Town.WORLD_X_MAX + 20.0 or absf(c.z) > Town.WORLD_Z + 20.0
 	if classic:
 		# end of flight: settled, or nothing interesting happening any more, or out of time/bounds
 		settle_timer = settle_timer + dt if (spd < 1.0 and now > 0.8) else 0.0
-		var quiet: bool = now > 2.0 and (now - maxf(_last_event, t_launch)) > 2.5 and c.y < 1.6 and spd < 4.0
+		var quiet: bool = now > 2.0 and (now - maxf(_last_event, t_launch)) > 2.5 and _agl(c) < 1.6 and spd < 4.0
 		if settle_timer > 0.6 or quiet or now > 13.0 or oob:
 			_finish()
 		return
@@ -1341,7 +1348,7 @@ func _pivot_tick(dt: float) -> void:
 	var k: float = Input.get_axis("ui_left", "ui_right")
 	if k != 0.0:
 		ai = k
-	if absf(ai) > 0.05 and ragdoll.torso.global_position.y > 1.3:
+	if absf(ai) > 0.05 and _agl(ragdoll.torso.global_position) > 1.3:
 		var axis: Vector3 = Vector3.UP.cross(_trav_dir).normalized()
 		ragdoll.torso.angular_velocity += axis * ai * 14.0 * float(fxp.get("spin_mult", 1.0)) * dt
 		ragdoll.clamp_omega(ragdoll.torso)
@@ -1374,7 +1381,7 @@ func _pivot_tick(dt: float) -> void:
 
 ## Arcade assist: keeps pushing along the ground velocity so the ragdoll skids through things instead of rolling to a stop.
 func _skid(dt: float) -> void:
-	if ragdoll.torso.global_position.y >= 2.8:
+	if _agl(ragdoll.torso.global_position) >= 2.8:
 		return
 	var v: Vector3 = ragdoll.torso.linear_velocity
 	var fwd: float = v.x * _skid_dir.x + v.z * _skid_dir.z
@@ -1447,7 +1454,7 @@ func _update_camera(dt: float) -> void:
 		var pos: Vector3 = c - _trav_dir * dist + side + Vector3(0, height, 0)
 		pos.x = clampf(pos.x, Town.WORLD_X_MIN + 2.0, Town.WORLD_X_MAX - 2.0)
 		pos.z = clampf(pos.z, -Town.WORLD_Z + 2.0, Town.WORLD_Z - 2.0)
-		pos.y = maxf(pos.y, 2.2)
+		pos.y = maxf(pos.y, (town.ground_y(pos.x, pos.z) if is_instance_valid(town) else 0.0) + 2.2)
 		var look: Vector3 = c + _trav_dir * 3.0 + Vector3(0, 0.5, 0)
 		_cam_look = _cam_look.lerp(look, 1.0 - exp(-7.0 * dt))
 		cam.global_position = cam.global_position.lerp(pos, 1.0 - exp(-(4.0 if classic else 6.0) * dt))
@@ -1486,7 +1493,7 @@ func _load_best() -> void:
 			economy_reset_note = true
 			_save_progress()
 		char_idx = int(cf.get_value("choice", "char", 0))
-		env_idx = Rules.env_index(str(cf.get_value("choice", "env_id", "downtown")))
+		env_idx = Rules.env_index(str(cf.get_value("choice", "env_id", "hill_steep")))
 		gore = bool(cf.get_value("settings", "gore", true))
 
 func _save_progress() -> void:
