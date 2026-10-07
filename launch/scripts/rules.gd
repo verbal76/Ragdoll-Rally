@@ -124,17 +124,55 @@ static func env_by_id(id: String) -> Dictionary:
 	return ENVIRONMENTS[env_index(id)]
 
 # ----------------------------------------------------------------- upgrades
-const UPGRADES: Dictionary = {
-	"power": {"name": "LAUNCH POWER", "desc": "Faster launch, harder hits", "max": 5, "costs": [250, 500, 900, 1500, 2400]},
-	"bounce": {"name": "BOUNCE", "desc": "Keeps more energy on impact", "max": 5, "costs": [250, 500, 900, 1500, 2400]},
-	"ricochet": {"name": "RICOCHET", "desc": "Wilder deflections, more secondary hits", "max": 5, "costs": [250, 500, 900, 1500, 2400]},
+# v15: the five MAYHEM upgrades have 20 levels. Prices follow one curve: cost(L) = base * (1 + 0.55 (L-1) + 0.045 (L-1)^2) rounded to 5
+# (level 1 = base, level 5 ~ 4x base, level 10 ~ 9.6x, level 20 ~ 27.6x). The whole tree is ~195k credits, about 80 decent runs (a run banks
+# ~2000-3500 credits), with the first four levels of everything affordable inside the first one or two runs.
+const MAYHEM_KEYS: Array[String] = ["power", "bounce", "ricochet", "destruction", "explosive"]
+const MAYHEM_MAX := 20
+const MAYHEM_BASE_COST := {"power": 150, "bounce": 110, "ricochet": 110, "destruction": 180, "explosive": 240}
+
+static func mayhem_cost(key: String, level_index: int) -> int:
+	var L: float = float(level_index)                      # 0-based index of the level being bought (0 = level 1)
+	return int(round(float(MAYHEM_BASE_COST[key]) * (1.0 + 0.55 * L + 0.045 * L * L) / 5.0)) * 5
+
+static func _mayhem_costs(key: String) -> Array:
+	var out: Array = []
+	for i in MAYHEM_MAX:
+		out.append(mayhem_cost(key, i))
+	return out
+
+static var UPGRADES: Dictionary = {
+	"power": {"name": "LAUNCH POWER", "desc": "Faster, higher, farther - up to absurd flights", "max": MAYHEM_MAX, "costs": _mayhem_costs("power")},
+	"bounce": {"name": "BOUNCE", "desc": "Keeps more energy on impact", "max": MAYHEM_MAX, "costs": _mayhem_costs("bounce")},
+	"ricochet": {"name": "RICOCHET", "desc": "Wilder deflections, more secondary hits", "max": MAYHEM_MAX, "costs": _mayhem_costs("ricochet")},
 	"spin": {"name": "SPIN", "desc": "More rotation and flailing", "max": 5, "costs": [200, 450, 800, 1300, 2000]},
 	"durability": {"name": "DURABILITY", "desc": "Stays in one piece longer", "max": 5, "costs": [250, 500, 900, 1500, 2400]},
-	"destruction": {"name": "DESTRUCTION", "desc": "Bigger breaks, bigger debris", "max": 5, "costs": [300, 600, 1000, 1700, 2600]},
-	"explosive": {"name": "EXPLOSIVE IMPACT", "desc": "+10% chance a hard hit explodes", "max": 4, "costs": [800, 1600, 2800, 4500]},
+	"destruction": {"name": "DESTRUCTION", "desc": "Wall breaker -> building wrecker -> city destroyer", "max": MAYHEM_MAX, "costs": _mayhem_costs("destruction")},
+	"explosive": {"name": "EXPLOSIVE IMPACT", "desc": "Hard hits detonate: bigger and surer every level", "max": MAYHEM_MAX, "costs": _mayhem_costs("explosive")},
 	"ignition": {"name": "IGNITION", "desc": "Burn on hard impact; ignites what you touch", "max": 3, "costs": [600, 1500, 3000]},
 }
 const UPGRADE_ORDER: Array[String] = ["power", "bounce", "ricochet", "spin", "durability", "destruction", "explosive", "ignition"]
+
+# v12-v14 prices (5 levels): used ONLY to migrate old saves by value (credits spent -> equivalent new levels).
+const LEGACY_COSTS := {
+	"power": [250, 500, 900, 1500, 2400], "bounce": [250, 500, 900, 1500, 2400], "ricochet": [250, 500, 900, 1500, 2400],
+	"destruction": [300, 600, 1000, 1700, 2600], "explosive": [800, 1600, 2800, 4500]}
+
+## Old save -> new levels: the credits an old level cost are re-spent on the new curve (cheapest levels first); what is left over goes
+## back to the bank. Nobody loses value and nobody is handed the mayhem tiers for free.
+static func migrate_levels(old: Dictionary) -> Dictionary:
+	var out: Dictionary = {"levels": old.duplicate(), "refund": 0}
+	for key in LEGACY_COSTS.keys():
+		var spent: int = 0
+		for i in mini(int(old.get(key, 0)), (LEGACY_COSTS[key] as Array).size()):
+			spent += int((LEGACY_COSTS[key] as Array)[i])
+		var lvl: int = 0
+		while lvl < MAYHEM_MAX and spent >= mayhem_cost(key, lvl):
+			spent -= mayhem_cost(key, lvl)
+			lvl += 1
+		(out["levels"] as Dictionary)[key] = lvl
+		out["refund"] = int(out["refund"]) + spent
+	return out
 
 static func upgrade_cost(key: String, level: int) -> int:
 	var u: Dictionary = UPGRADES[key]
@@ -187,28 +225,87 @@ static func effective(stats: Dictionary, lv: Dictionary) -> Dictionary:
 	var ld: float = float(lv.get("durability", 0))
 	var le: float = float(lv.get("explosive", 0))
 	var li: int = int(lv.get("ignition", 0))
-	var restitution: float = clampf(0.22 + 0.09 * b + 0.04 * lb, 0.1, 0.95)
+	var restitution: float = clampf(0.22 + 0.09 * b + 0.015 * lb, 0.1, 0.95)
 	return {
-		"launch_mult": 0.90 + 0.055 * p + 0.05 * lp,
-		"impact_power": 0.8 + 0.1 * p + 0.1 * lp,
-		"extra_mass": 0.35 * p + 0.5 * lp,
+		"launch_mult": 0.90 + 0.055 * p + 0.045 * lp,
+		"impact_power": 0.8 + 0.1 * p + 0.06 * lp,
+		"extra_mass": 0.35 * p + 0.3 * lp,
 		"restitution": restitution,
-		"tangent_keep": clampf(0.74 + 0.03 * b + 0.015 * lb, 0.5, 0.97),
+		"tangent_keep": clampf(0.74 + 0.03 * b + 0.006 * lb, 0.5, 0.97),
 		"energy_decay": clampf(0.34 - 0.30 * restitution, 0.06, 0.30),
-		"ricochet_deg": 5.0 + 5.0 * r + 3.0 * lr,
+		"ricochet_deg": 5.0 + 5.0 * r + 1.5 * lr,
 		"jitter": 0.5 + 0.25 * c,
-		"spin_mult": 0.7 + 0.22 * s + 0.12 * ls,
-		"flail": 0.5 + 0.2 * s + 0.08 * ls,
+		"spin_mult": 0.7 + 0.22 * s + 0.07 * ls,
+		"flail": 0.5 + 0.2 * s + 0.05 * ls,
 		"dismember_k": clampf(1.6 - 0.24 * d - 0.1 * ld, 0.15, 2.0),
-		"destruct_mult": 1.0 + 0.2 * float(lv.get("destruction", 0)),
-		"explode_chance": clampf(0.10 * le, 0.0, 0.5),
+		"destruct_mult": destruct_k(int(lv.get("destruction", 0))),
+		"explode_radius": blast_radius(int(le)),
+		"explode_power": blast_power(int(le)),
+		"explode_level": int(le),
+		"explode_chance": explode_chance(int(le)),
 		"ignition": li,
 		"ignite_speed": 14.0 if li <= 1 else 9.0,
 		"fire_spread": 1.0 + 0.25 * float(li),
-		"assist": 0.25 + 0.05 * b + 0.04 * lb,        # extra skip retention on grazing hits (fades with energy)
+		"assist": 0.25 + 0.05 * b + 0.02 * lb,        # extra skip retention on grazing hits (fades with energy)
 		"range_cap": RANGE_CAP_BASE + RANGE_CAP_PER_LEVEL * lp,   # launch governor (see governed_speed)
 		"apex_cap": APEX_CAP_BASE + APEX_CAP_PER_LEVEL * lp,
 	}
+
+
+# ----------------------------------------------------------------- 20-level mayhem helpers
+## Qualitative band names for a 0..20 level.
+static func mayhem_band(level: int) -> String:
+	if level <= 0: return "Stock"
+	if level <= 4: return "Ragdoll Chaos"
+	if level <= 8: return "Destructive Chaos"
+	if level <= 12: return "Building Wrecker"
+	if level <= 16: return "City Destroyer"
+	return "Absurd Mayhem"
+
+## Destruction multiplier on impact energy against structure strength (Lv0 1.0 ... Lv20 ~9.4).
+static func destruct_k(level: int) -> float:
+	var L: float = float(clampi(level, 0, MAYHEM_MAX))
+	return 1.0 + 0.10 * L + 0.016 * L * L
+
+## Probability that an impact above the energy threshold detonates (0 at Lv0).
+static func explode_chance(level: int) -> float:
+	if level <= 0: return 0.0
+	return clampf(0.08 + 0.045 * float(level), 0.0, 0.95)
+
+## Blast radius in metres (Lv1 ~5.9 ... Lv20 ~31).
+static func blast_radius(level: int) -> float:
+	if level <= 0: return 0.0
+	var E: float = float(level)
+	return 5.0 + 0.9 * E + 0.02 * E * E
+
+## Blast impulse strength (Lv1 ~22 ... Lv20 ~64).
+static func blast_power(level: int) -> float:
+	if level <= 0: return 0.0
+	return 20.0 + 2.2 * float(level)
+
+## Crater severity 0 none, 1 small, 2 medium, 3 large, 4 catastrophic, from explosive level (and optional bonus energy).
+static func crater_tier(level: int) -> int:
+	if level <= 0: return 0
+	if level <= 5: return 1
+	if level <= 10: return 2
+	if level <= 16: return 3
+	return 4
+
+## Kinetic energy proxy of an impact (mass-weighted v^2 / 2).
+static func impact_energy(mass: float, speed: float) -> float:
+	return 0.5 * mass * speed * speed
+
+## Penetration model. `energy` is the attacker's impact energy times destruct_k; `strength` is the structure's resistance
+## (sum for the layers it crosses). Returns {"depth": 0..1+ of strength overcome, "pierce": bool, "keep": momentum fraction kept}.
+static func penetration(energy: float, strength: float) -> Dictionary:
+	var ratio: float = energy / maxf(strength, 0.001)
+	var pierce: bool = ratio >= 1.0
+	var keep: float = 0.0
+	if pierce:
+		keep = clampf(1.0 - 1.0 / (1.0 + ratio * 0.5) * 0.9, 0.35, 0.97)    # overwhelming energy loses little speed
+	else:
+		keep = 0.0                                                               # blocked: normal bounce/ricochet path
+	return {"ratio": ratio, "pierce": pierce, "keep": keep}
 
 # ----------------------------------------------------------------- launch trajectory governor
 # v12 finding: a hard pull gave 46 deg at up to 72-95 m/s, i.e. a 300-500 m range and a 80-135 m apex: straight over the
@@ -221,9 +318,9 @@ const SOFT_PITCH_START_DEG := 28.0        # at or below this the gesture's pitch
 const MAX_PITCH_DEG := 40.0               # absolute ceiling for any gesture (approached asymptotically, never reached)
 const MIN_PITCH_DEG := 3.0
 const RANGE_CAP_BASE := 150.0             # ideal (drag-free) ballistic range ceiling, metres...
-const RANGE_CAP_PER_LEVEL := 6.0          # ...+6 m per Launch Power level (max 180 m, wall is at 215 m)
+const RANGE_CAP_PER_LEVEL := 9.5          # ...+9.5 m per Launch Power level (max 340 m at Lv20; world is extended to match)
 const APEX_CAP_BASE := 55.0               # ideal apex ceiling, metres (tallest Downtown tower ~58 m)
-const APEX_CAP_PER_LEVEL := 1.0
+const APEX_CAP_PER_LEVEL := 3.2
 const SOFT_KNEE := 0.78                   # caps start compressing at this fraction of the ceiling
 
 static func g_eff() -> float:

@@ -67,7 +67,7 @@ func _run() -> void:
 				range_over_cap = true
 	check(max_pitch < Rules.MAX_PITCH_DEG, "gesture matrix (11 gestures x 3 upgrade tiers): launch pitch never reaches the %.0f deg ceiling (max %.1f)" % [Rules.MAX_PITCH_DEG, max_pitch])
 	check(not apex_over_cap and not range_over_cap, "ideal apex <= cap and ideal range <= cap for every gesture/upgrade combination (worst range %.0f m, apex %.0f m)" % [worst_range, worst_apex])
-	check(worst_range < 181.0 and worst_range < Rules.RANGE_CAP_BASE + 5 * Rules.RANGE_CAP_PER_LEVEL + 0.5, "no gesture can out-range the playfield (%.0f m < 215 m wall)" % worst_range)
+	check(worst_range < Rules.RANGE_CAP_BASE + Rules.MAYHEM_MAX * Rules.RANGE_CAP_PER_LEVEL + 0.5, "no gesture can out-range the Lv20 range cap (%.0f m)" % worst_range)
 	for dg in [5.0, 12.0, 20.0, 28.0]:
 		check(is_equal_approx(Rules.soft_pitch_deg(dg), maxf(dg, Rules.MIN_PITCH_DEG)), "pitch %.0f deg passes through untouched (loft, rooftops, skips keep their angle)" % dg)
 	var prev := 0.0
@@ -108,7 +108,7 @@ func _run() -> void:
 		var credit: int = Rules.bank_credit(profiles[pn])
 		runs[pn] = float(total) / float(maxi(credit, 1))
 		print("      %-9s score %5d -> credits %5d -> %.1f runs to max all 8 upgrades (%d cr)" % [pn, score, credit, runs[pn], total])
-	check(runs["good"] >= 20.0 and runs["good"] <= 30.0, "a GOOD run maxes the 8 upgrades in 20-30 runs (%.1f)" % runs["good"])
+	check(runs["good"] >= 60.0 and runs["good"] <= 140.0, "a GOOD run maxes the 20-level tree in 60-140 runs (%.1f)" % runs["good"])
 	check(runs["excellent"] >= 10.0, "an EXCELLENT run cannot trivialise progression (>= 10 runs, %.1f)" % runs["excellent"])
 	check(runs["weak"] > runs["average"] and runs["average"] > runs["good"] and runs["good"] > runs["excellent"], "progression is monotonic: weak > average > good > excellent runs needed")
 	check(Rules.bank_credit(profiles["weak"]) >= 150, "weak players still bank something meaningful each run (%d)" % Rules.bank_credit(profiles["weak"]))
@@ -126,7 +126,7 @@ func _run() -> void:
 			okm = false
 		last = c
 	check(okm, "credits never decrease as score rises")
-	check(int(Rules.upgrade_cost("power", 0)) == 250 and int(Rules.upgrade_cost("explosive", 3)) == 4500, "upgrade prices unchanged from v12 (the earning rate was fixed, not the prices)")
+	check(int(Rules.upgrade_cost("power", 0)) == 150 and int(Rules.upgrade_cost("power", 19)) > int(Rules.upgrade_cost("power", 18)) and int(Rules.upgrade_cost("power", 20)) == -1, "20-level price curve: Lv1 costs 150, strictly rising, capped at 20")
 
 	# ============================================================ SKIP SCORING
 	var seven := 0
@@ -189,7 +189,7 @@ func _run() -> void:
 		var fxs: Dictionary = Rules.effective(Rules.CHARACTERS[ci]["stats"], mx)
 		var gv: float = Rules.governed_speed(Main.speed_for_power(Main.OVERDRIVE_MAX) * float(fxs["launch_mult"]), deg_to_rad(35.0), fxs)
 		worst_stack = maxf(worst_stack, Rules.ideal_range(gv, deg_to_rad(35.0)))
-	check(worst_stack <= 181.0, "all 18 characters at max upgrades stay inside the range cap (worst %.0f m)" % worst_stack)
+	check(worst_stack <= Rules.RANGE_CAP_BASE + Rules.MAYHEM_MAX * Rules.RANGE_CAP_PER_LEVEL + 1.0, "all 18 characters at max upgrades stay inside the range cap (worst %.0f m)" % worst_stack)
 
 	# ============================================================ RELEASE GATE: no economy test controls in player UI
 	var src := FileAccess.get_file_as_string("res://scripts/main.gd")

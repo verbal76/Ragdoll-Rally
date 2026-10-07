@@ -293,14 +293,14 @@ func _run() -> void:
 	await frames(3)
 	check(db.collision_layer == 1 and main.town.decor_smashed == 0, "reset restores broken decor")
 	# ---- upgrades (new system: 8 families that stack; full coverage lives in verify_pivot.gd)
-	main.bank = 1000
+	main.bank = 400
 	main.levels = main.Rules.empty_levels()
-	check(main.buy("power") and main.buy("bounce") and main.bank == 500, "two level-1 upgrades bought for 250 each (bank %d)" % main.bank)
+	check(main.buy("power") and main.buy("bounce") and main.bank == 400 - 150 - 110, "two level-1 upgrades bought at 150 + 110 (bank %d)" % main.bank)
 	check(not main.buy("explosive") and main.get_level("power") == 1, "cannot buy without enough points")
 	main.bank = 100000
-	for i in 8:
+	for i in 25:
 		main.buy("power")
-	check(main.get_level("power") == 5 and main.upgrade_cost("power") == -1, "upgrades cap at their max level")
+	check(main.get_level("power") == 20 and main.upgrade_cost("power") == -1, "upgrades cap at their max level")
 	main.bank = 0
 	main.levels = main.Rules.empty_levels()
 	main._save_progress()

@@ -90,7 +90,7 @@ func _rules() -> void:
 	var top: Dictionary = Rules.effective(C[0]["stats"], maxed)
 	check(top["launch_mult"] > base["launch_mult"] and top["restitution"] > base["restitution"] and top["ricochet_deg"] > base["ricochet_deg"], "launch power, bounce and ricochet upgrades raise their numbers")
 	check(top["spin_mult"] > base["spin_mult"] and top["dismember_k"] < base["dismember_k"] and top["destruct_mult"] > base["destruct_mult"], "spin, durability and destruction upgrades apply")
-	check(is_equal_approx(top["explode_chance"], 0.4) and base["explode_chance"] == 0.0 and int(top["ignition"]) == 3, "explosive impact = 10% per level (40% max); ignition levels apply")
+	check(top["explode_chance"] > 0.9 and base["explode_chance"] == 0.0 and int(top["ignition"]) == 3 and top["explode_radius"] > 25.0, "explosive impact: Lv20 ~95%% chance, 25+ m blast; ignition levels apply")
 	var prev := -1.0
 	var mono := true
 	for lv in 6:
@@ -106,7 +106,7 @@ func _rules() -> void:
 	two["ricochet"] = 3
 	var e2: Dictionary = Rules.effective(C[0]["stats"], two)
 	check(e2["restitution"] > base["restitution"] and e2["ricochet_deg"] > base["ricochet_deg"], "upgrades stack: bounce + ricochet both active together")
-	check(Rules.upgrade_cost("power", 0) == 250 and Rules.upgrade_cost("power", 5) == -1 and Rules.upgrade_cost("explosive", 3) == 4500, "upgrade costs rise and cap")
+	check(Rules.upgrade_cost("power", 0) == 150 and Rules.upgrade_cost("power", 20) == -1 and Rules.upgrade_cost("explosive", 3) > Rules.upgrade_cost("explosive", 2), "upgrade costs rise and cap at 20")
 	check(Rules.UPGRADE_ORDER.size() == 8 and Rules.UPGRADES.size() == 8, "8 upgrade families (power, bounce, ricochet, spin, durability, destruction, explosive, ignition)")
 	# --- impacts: skipping-stone model
 	var fx: Dictionary = Rules.effective(C[0]["stats"], none)
@@ -171,7 +171,7 @@ func _rules() -> void:
 	for i in 10000:
 		if Rules.explosive_impact(20.0, ex, float(i) / 10000.0):
 			hits += 1
-	check(absi(hits - 1000) <= 5, "explosive impact level 1 fires ~10%% of qualifying hits (%d / 10000)" % hits)
+	check(absi(hits - 1250) <= 5, "explosive impact level 1 fires ~12.5%% of qualifying hits (%d / 10000)" % hits)
 	check(not Rules.explosive_impact(5.0, ex, 0.0) and not Rules.explosive_impact(20.0, fx, 0.0), "no explosion on a soft tap or without the upgrade")
 	# --- run termination
 	check(Rules.run_finished({"elapsed": 12.0, "landed": false, "max_speed": 40.0, "max_t": 11.0}), "a run can never last longer than the cap")

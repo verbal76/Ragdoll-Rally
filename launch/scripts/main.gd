@@ -90,7 +90,8 @@ var _oob_at: float = -1.0
 var _last_skip_t: float = -9.0
 var _air_since_skip: bool = true
 var economy_reset_note: bool = false
-const ECONOMY_SCHEMA := 2
+const ECONOMY_SCHEMA := 3          # 3 = 20-level mayhem upgrades (levels re-spent on the new curve, surplus refunded)
+var migration_refund := 0
 var _pop_slot: int = 0
 var _wound_down: bool = false
 var cam_event: float = 0.0             # briefly widens the camera after big events
@@ -1486,7 +1487,14 @@ func _load_best() -> void:
 		bank = int(cf.get_value("progress", "bank", 0))
 		for key in Rules.UPGRADE_ORDER:
 			levels[key] = clampi(int(cf.get_value("progress", "up_" + key, 0)), 0, int((Rules.UPGRADES[key] as Dictionary)["max"]))
-		if int(cf.get_value("progress", "schema", 0)) < ECONOMY_SCHEMA:
+		var saved_schema: int = int(cf.get_value("progress", "schema", 0))
+		if saved_schema == 2:
+			var mig: Dictionary = Rules.migrate_levels(levels)
+			levels = mig["levels"]
+			migration_refund = int(mig["refund"])
+			bank += migration_refund
+			_save_progress()
+		elif saved_schema < 2:
 			# v12 and earlier banked score 1:1 and had a +10,000 test button: that progress is not real progression.
 			bank = 0
 			levels = Rules.empty_levels()
