@@ -181,6 +181,9 @@ jobs:
       - name: Verify (v13 city quality gate - 7 cities, automated throws, reachability, clearance, determinism)
         run: godot --headless --path launch -s tests/verify_cities.gd
 
+      - name: Verify (v14 hillside cities - terrain, generator seeds, reachability, determinism)
+        run: godot --headless --path launch -s tests/verify_hills.gd
+
       - name: Physics regression vs Godot 4.4.1 reference
         run: |
           godot --headless --path launch -s tests/physics_baseline.gd -- "$GITHUB_WORKSPACE/physics_ci.json"

@@ -15,8 +15,8 @@ static func build(t, id: String) -> void:
 		"resort": resort(t)
 
 # ============================================================================ DOWNTOWN: verticality
-const DT_FRONT_H: Array[int] = [24, 34, 28, 46, 32, 40, 26]
-const DT_BACK_H: Array[int] = [38, 26, 40, 44, 36, 24, 42]
+const DT_FRONT_H: Array[int] = [24, 30, 28, 32, 30, 28, 26]
+const DT_BACK_H: Array[int] = [32, 26, 34, 30, 32, 24, 34]
 const DT_COLORS: Array[Color] = [Color(0.55, 0.62, 0.72), Color(0.42, 0.48, 0.58), Color(0.65, 0.58, 0.52), Color(0.35, 0.40, 0.46), Color(0.70, 0.72, 0.76)]
 
 static func _scaffold(t, x: float, z: float, levels: int, group: String) -> void:
@@ -290,10 +290,10 @@ static func industrial(t) -> void:
 			t._bonus(hook, "ind_hook", "Crane Hook", 700)
 	# smokestacks: static base + three breakable top blocks that topple
 	for sp in [Vector3(112.0, 0.0, 30.0), Vector3(126.0, 0.0, 34.0)]:
-		t._yard_box(Vector3(sp.x, 13.0, sp.z), Vector3(4.5, 26.0, 4.5), Color(0.55, 0.3, 0.25), "masonry")
+		t._yard_box(Vector3(sp.x, 9.0, sp.z), Vector3(4.5, 18.0, 4.5), Color(0.55, 0.3, 0.25), "masonry")
 		var top = null
 		for lv in 3:
-			top = t._block(Vector3(sp.x, 28.25 + 4.5 * float(lv), sp.z), Vector3(4.5, 4.5, 4.5), Color(0.55, 0.3, 0.25), "masonry", 6.0, 7.0, "stack_%d" % int(sp.x), true)
+			top = t._block(Vector3(sp.x, 20.25 + 4.5 * float(lv), sp.z), Vector3(4.5, 4.5, 4.5), Color(0.55, 0.3, 0.25), "masonry", 6.0, 7.0, "stack_%d" % int(sp.x), true)
 		if sp.x < 120.0:
 			t._bonus(top, "ind_stack", "Smokestack", 900)
 	# pallet + barrel kindling between the buildings (the fuse of the chain)
@@ -346,7 +346,7 @@ static func _hotel(t, cx: float, cz: float, w: float, h: float, d: float, col: C
 	return sign_b
 
 static func resort(t) -> void:
-	var sign_a = _hotel(t, 52.0, -22.0, 22.0, 34.0, 18.0, Color(1.0, 0.62, 0.7), 1, "FLAMINGO")
+	var sign_a = _hotel(t, 52.0, -22.0, 22.0, 26.0, 18.0, Color(1.0, 0.62, 0.7), 1, "FLAMINGO")
 	t._bonus(sign_a, "rs_sign", "Flamingo Sign", 900)
 	t._glass_wall(Vector3(40.0, 0.0, -22.0), Vector3(0, 0, 1), Vector3(-1, 0, 0), 16.0, 12.0, 4.0, 4.0)       # lobby glass facing the launcher
 	_lifeguard(t, 38.0, -11.0, "lg_a")
@@ -358,7 +358,7 @@ static func resort(t) -> void:
 	var kx: Array[float] = [64.0, 72.0, 80.0, 114.0]
 	for i in 4:
 		_kiosk(t, kx[i], -26.0 if i % 2 == 0 else 26.0, "kiosk_%d" % i)
-	var pent = _hotel(t, 96.0, 22.0, 26.0, 44.0, 18.0, Color(0.45, 0.85, 0.85), -1, "AQUA")
+	var pent = _hotel(t, 96.0, 22.0, 26.0, 32.0, 18.0, Color(0.45, 0.85, 0.85), -1, "AQUA")
 	t._bonus(pent, "rs_aqua", "Aqua Penthouse", 600)
 	_hotel(t, 124.0, -22.0, 20.0, 28.0, 16.0, Color(1.0, 0.9, 0.45), 1, "SUNSET")
 	# palm boulevard

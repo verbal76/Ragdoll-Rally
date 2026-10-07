@@ -46,7 +46,7 @@ def main():
     check(len(scripts) >= 8, "game scripts packaged (%d)" % len(scripts))
     check(any(n.endswith("cities.gdc") or n.endswith("cities.gd") for n in scripts), "city builder script is packaged (cities.gd)")
     check(any(n.endswith("rules.gdc") or n.endswith("rules.gd") for n in scripts), "rules script is packaged (rules.gd)")
-    for city in ["DOWNTOWN", "OLD TOWN", "SUBURBIA", "INDUSTRIAL DISTRICT", "RESORT STRIP", "GRAND FORTRESS", "RAGDOLL TEST YARD"]:
+    for city in ["HILLSIDE DISTRICT", "VALLEY NEIGHBORHOODS", "ROLLING HEIGHTS", "SKYLINE HILL", "DOWNTOWN", "OLD TOWN", "SUBURBIA", "INDUSTRIAL DISTRICT", "RESORT STRIP", "GRAND FORTRESS", "RAGDOLL TEST YARD"]:
         check(has(city), "city name packaged: %s" % city)
     check(has("TRAINING"), "Test Yard is tagged TRAINING")
     check(not has("+10,000 (TEST)") and not has("(TEST)"), "no '+10,000 (TEST)' / '(TEST)' player string in the game code")
@@ -54,6 +54,10 @@ def main():
     check(not has("COMING SOON") and not has("not built yet"), "no COMING SOON / LOCKED placeholders")
     for ident in ["boundary", "OUT OF BOUNDS"]:
         check(has(ident), "code present: %s" % ident)
+    for asset in ["splat_atlas.png", "toon_fire.gdshader", "toon_smoke.gdshader", "toon_smoke_outline.gdshader", "building-window.glb", "roof-gable.glb"]:
+        check(any(asset in n for n in names), "v14 asset packaged: %s" % asset)
+    check(any("kenney/modular-buildings/Textures/colormap.png" in n for n in names), "kit colour map packaged next to the models")
+    check(any(n.endswith("terrain.gdc") or n.endswith("terrain.gd") for n in scripts) and any(n.endswith("hillside.gdc") or n.endswith("hillside.gd") for n in scripts), "terrain + hillside generator scripts packaged")
     logo = [n for n in names if "Hot_Attic_Games_Master_Logo_ALPHA_FINAL" in n]
     check(any(n.endswith(".ctex") for n in logo) or any(n.endswith(".png") for n in logo), "canonical studio logo packaged: %s" % (logo[:2],))
     check(not any("Hot_Attic_Games_Master_Logo.png" in n and "ALPHA_FINAL" not in n for n in names), "the obsolete logo file is not packaged")

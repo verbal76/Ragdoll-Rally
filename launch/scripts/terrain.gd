@@ -112,7 +112,7 @@ func build_mesh() -> ArrayMesh:
 	for iz in nz - 1:
 		for ix in nx - 1:
 			var a: int = iz * nx + ix
-			idx.append_array(PackedInt32Array([a, a + nx, a + 1, a + 1, a + nx, a + nx + 1]))
+			idx.append_array(PackedInt32Array([a, a + 1, a + nx, a + 1, a + nx + 1, a + nx]))
 	var arr: Array = []
 	arr.resize(Mesh.ARRAY_MAX)
 	arr[Mesh.ARRAY_VERTEX] = verts
@@ -198,7 +198,7 @@ func build_backdrop() -> MeshInstance3D:
 	for iz in cz - 1:
 		for ix in cx - 1:
 			var a: int = iz * cx + ix
-			idx.append_array(PackedInt32Array([a, a + cx, a + 1, a + 1, a + cx, a + cx + 1]))
+			idx.append_array(PackedInt32Array([a, a + 1, a + cx, a + 1, a + cx + 1, a + cx]))
 	var arr: Array = []
 	arr.resize(Mesh.ARRAY_MAX)
 	arr[Mesh.ARRAY_VERTEX] = verts

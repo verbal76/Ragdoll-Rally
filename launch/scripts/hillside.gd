@@ -333,8 +333,94 @@ static func _flat_mat(c: Ctx, col: Color) -> StandardMaterial3D:
 	c.mats[key] = m
 	return m
 
+
+# --------------------------------------------------------------------------------------------- Kenney modular building kit (CC0)
+const KIT_DIR := "res://assets/kenney/modular-buildings/%s.glb"
+const CELL_W := 4.96                  # world metres per kit cell (so one floor = 3.1 m: kit cube is 1 x 0.625 x 1)
+const CELL_H := 0.625
+static var _kit_meshes: Dictionary = {}
+static var _unit_meshes: Dictionary = {}
+static var _tex_b: Texture2D = null
+
+static func _km(name: String) -> Mesh:
+	if not _kit_meshes.has(name):
+		var ps: PackedScene = load(KIT_DIR % name)
+		var inst: Node = ps.instantiate()
+		var m: Mesh = null
+		for n in inst.find_children("*", "MeshInstance3D", true, false):
+			m = (n as MeshInstance3D).mesh
+			break
+		inst.free()
+		_kit_meshes[name] = m
+	return _kit_meshes[name]
+
+static func _kit_mat(c: Ctx, tint: Color, variant: int) -> StandardMaterial3D:
+	var key: int = tint.to_rgba32() ^ (variant * 0x3a3a3a)
+	if c.mats.has(key):
+		return c.mats[key]
+	var base: StandardMaterial3D = _km("building-block").surface_get_material(0)
+	var m: StandardMaterial3D = base.duplicate()
+	m.albedo_color = tint
+	if variant == 1:
+		if _tex_b == null:
+			_tex_b = load("res://assets/kenney/modular-buildings/Textures/variation-b.png")
+		m.albedo_texture = _tex_b
+	c.mats[key] = m
+	return m
+
+## Unit-space building mesh from kit cubes: nw x nd cells, `fv` floors, roof (0 gable, 1 flat, 2 none). Footprint centred on the origin,
+## base at y = 0, one cell = 1 x 0.625 x 1 (the instance is scaled to the lot). Cached by shape.
+static func _unit_mesh(nw: int, nd: int, fv: int, roof: int, vs: int) -> Mesh:
+	var key: String = "%d_%d_%d_%d_%d" % [nw, nd, fv, roof, vs % 7]
+	if _unit_meshes.has(key):
+		return _unit_meshes[key]
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var first: Mesh = _km("building-block")
+	var upper: Array[String] = ["building-window", "building-windows", "building-windows-sills", "building-window", "building-windows", "building-window-balcony"]
+	var ground: Array[String] = ["building-door-window", "building-door", "building-door-window", "building-window"]
+	for f in fv:
+		for i in nw:
+			for k in nd:
+				var cx: float = float(i) - float(nw - 1) * 0.5
+				var cz: float = float(k) - float(nd - 1) * 0.5
+				var faces: Array[float] = []
+				if k == nd - 1:
+					faces.append(0.0)                    # +Z (toward the street after the lot's yaw)
+				if k == 0:
+					faces.append(PI)
+				if i == nw - 1:
+					faces.append(PI * 0.5)
+				if i == 0:
+					faces.append(-PI * 0.5)
+				var h: int = (i * 7 + k * 13 + f * 5 + vs * 3) % 9
+				var rot: float = faces[0] if (f == 0 or faces.size() == 1) else faces[h % faces.size()]
+				var nm: String
+				if f == 0:
+					nm = ground[(i + k + vs) % ground.size()] if (k == nd - 1 or faces.size() == 1) else "building-block"
+				else:
+					nm = upper[h % upper.size()]
+					if nm == "building-window-balcony" and f < 1:
+						nm = "building-window"
+				st.append_from(_km(nm), 0, Transform3D(Basis(Vector3.UP, rot), Vector3(cx, float(f) * CELL_H, cz)))
+	var ytop: float = float(fv) * CELL_H
+	if roof == 0:
+		var along_x: bool = nw >= nd
+		for i in nw:
+			for k in nd:
+				var cx2: float = float(i) - float(nw - 1) * 0.5
+				var cz2: float = float(k) - float(nd - 1) * 0.5
+				st.append_from(_km("roof-gable"), 0, Transform3D(Basis(Vector3.UP, 0.0 if along_x else PI * 0.5), Vector3(cx2, ytop, cz2)))
+	elif roof == 1:
+		for i in nw:
+			for k in nd:
+				st.append_from(_km("roof-flat-top"), 0, Transform3D(Basis.IDENTITY, Vector3(float(i) - float(nw - 1) * 0.5, ytop, float(k) - float(nd - 1) * 0.5)))
+	var m: ArrayMesh = st.commit()
+	_unit_meshes[key] = m
+	return m
+
 ## A breakable frozen block with a window-textured (or flat) look, rotated by yaw. Same bookkeeping as Town._block.
-static func _hblock(c: Ctx, pos: Vector3, size: Vector3, yaw: float, col: Color, mat_name: String, group: String, mass: float, tough: float, windows: bool = true, group_all: bool = false) -> RigidBody3D:
+static func _hblock(c: Ctx, pos: Vector3, size: Vector3, yaw: float, col: Color, mat_name: String, group: String, mass: float, tough: float, windows: bool = true, group_all: bool = false, kit: Dictionary = {}) -> RigidBody3D:
 	var t = c.t
 	var b := RigidBody3D.new()
 	b.name = "hb_%d" % t.pieces.size()
@@ -352,10 +438,16 @@ static func _hblock(c: Ctx, pos: Vector3, size: Vector3, yaw: float, col: Color,
 	cs.shape = sh
 	b.add_child(cs)
 	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = size
-	bm.material = _wall_mat(c, col) if windows else _flat_mat(c, col)
-	mi.mesh = bm
+	if kit.is_empty():
+		var bm := BoxMesh.new()
+		bm.size = size
+		bm.material = _wall_mat(c, col) if windows else _flat_mat(c, col)
+		mi.mesh = bm
+	else:
+		mi.mesh = kit["mesh"]
+		mi.material_override = kit["mat"]
+		mi.scale = kit["scale"]
+		mi.position = Vector3(0, -size.y * 0.5, 0)
 	b.add_child(mi)
 	b.set_meta("rest", b.position)
 	b.set_meta("kind", "wall")
@@ -455,23 +547,45 @@ static func _building(c: Ctx, center: Vector2, w: float, d: float, yaw: float, f
 	c.n_lots += 1
 	# the body reaches 0.5 m under the lowest ground of the footprint: it sits on the slope without a visible gap
 	var bottom: float = lo - 0.5
-	var top: float = hi + body_h
-	var h_total: float = top - bottom
-	var segs: int = 1 if h_total <= 13.0 else 2
-	var seg_h: float = h_total / float(segs)
+	var floors_h: float = (hi + body_h) - bottom
+	var nwc: int = clampi(int(round(w / CELL_W)), 1, 3)
+	var ndc: int = clampi(int(round(d / CELL_W)), 1, 3)
+	var fv: int = maxi(1, int(round(floors_h / FLOOR_H)))
+	var sy: float = floors_h / (float(fv) * CELL_H)
+	var roof_kind: int = 0 if (kind == "house" or kind == "row") else 1
+	var roof_unit: float = 0.52 if roof_kind == 0 else 0.215
+	var roof_h: float = roof_unit * sy
+	var h_total: float = floors_h + roof_h
+	var top: float = bottom + h_total
+	# the street faces the model's +Z: flip the lot's yaw when its +Z points away from the frontage
+	var fsgn: float = front_dir.x if front_dir != Vector2.ZERO else 1.0
+	var fyaw: float = yaw + (PI if sin(yaw) * fsgn > 0.0 else 0.0)
+	var vs: int = int(_hf(seedv, 3, 29) * 1000.0)
+	var tint: Color = Color(minf(col.r / 0.72, 1.5), minf(col.g / 0.74, 1.5), minf(col.b / 0.92, 1.5)).lerp(Color(1, 1, 1), 0.2)   # the kit texture is blue-grey: divide it out so the lot's pastel shows
+	var kmat: StandardMaterial3D = _kit_mat(c, tint, 1 if _hf(seedv, 11, 7) < 0.3 else 0)
+	var segs: int = 1 if h_total <= 13.0 or fv < 4 else 2
 	var first: RigidBody3D = null
 	var y: float = bottom
+	var f_done: int = 0
+	var roof_body: RigidBody3D = null
 	for sgi in segs:
+		var f_seg: int = fv / segs if sgi < segs - 1 else fv - f_done
+		var seg_floors_h: float = float(f_seg) * CELL_H * sy
+		var is_top: bool = sgi == segs - 1
+		var seg_h: float = seg_floors_h + (roof_h if is_top else 0.0)
+		var um: Mesh = _unit_mesh(nwc, ndc, f_seg, roof_kind if is_top else 2, vs)
+		var kit: Dictionary = {"mesh": um, "mat": kmat, "scale": Vector3(w / float(nwc), sy, d / float(ndc))}
 		var pos := Vector3(center.x, y + seg_h * 0.5, center.y)
-		var b: RigidBody3D = _hblock(c, pos, Vector3(w, seg_h, d), yaw, col, mat, grp, 3.0 + seg_h * w * d * 0.012, 6.0 if mat == "masonry" else 4.2)
+		var b: RigidBody3D = _hblock(c, pos, Vector3(w, seg_h, d), fyaw, col, mat, grp, 3.0 + seg_h * w * d * 0.012, 6.0 if mat == "masonry" else 4.2, true, false, kit)
 		if first == null:
 			first = b
+		if is_top:
+			roof_body = b
 		y += seg_h
-	var rcol: Color = ROOFS[int(_hf(seedv, 9, 17) * float(ROOFS.size())) % ROOFS.size()]
-	var roof: RigidBody3D = _hblock(c, Vector3(center.x, top + 0.3, center.y), Vector3(w + 0.5, 0.6, d + 0.5), yaw, rcol, "roof", grp, 2.0, 4.0, false)
-	var wing: RigidBody3D = null
+		f_done += f_seg
+	var roof: RigidBody3D = roof_body
 	var li: int = c.lots.size()
-	c.lots.append({"pos": Vector3(center.x, top, center.y), "size": Vector3(w, h_total, d), "yaw": yaw, "kind": kind, "body": roof, "tag": tag})
+	c.lots.append({"pos": Vector3(center.x, top, center.y), "size": Vector3(w, h_total, d), "yaw": fyaw, "kind": kind, "body": roof, "tag": tag})
 	var rr: float = maxf(w, d)
 	for gx in range(int(floor((center.x - rr) / 16.0)), int(floor((center.x + rr) / 16.0)) + 1):
 		for gz in range(int(floor((center.y - rr) / 16.0)), int(floor((center.y + rr) / 16.0)) + 1):
@@ -479,7 +593,7 @@ static func _building(c: Ctx, center: Vector2, w: float, d: float, yaw: float, f
 			var arr: Array = c.grid.get(key, [])
 			arr.append(li)
 			c.grid[key] = arr
-	return roof if roof != null else wing
+	return roof
 
 static func _lots(c: Ctx) -> void:
 	var seed: int = int(c.preset["seed"])
@@ -568,7 +682,7 @@ static func _lots(c: Ctx) -> void:
 					# keep roofs inside the reachable envelope
 					var ground: float = c.ter.height(xc, zc)
 					var allowed: float = envelope(Vector2(xc, zc).length()) - ground
-					floors = mini(floors, maxi(2, int(allowed / FLOOR_H)))
+					floors = mini(floors, maxi(2, int((allowed - 2.4) / FLOOR_H)))
 					if allowed < 2.0 * FLOOR_H + 1.0:
 						_d("high_ground")             # still built (reachable by skipping up the hill), just never taller than two floors
 					_building(c, ctr, w, d, yaw, floors, int(hv * 997.0) + lot_i, kind, "%d_%d_%d_f" % [i, j, row], Vector2(sgn, 0.0))

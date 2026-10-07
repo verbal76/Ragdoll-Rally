@@ -46,6 +46,7 @@ func _throw(char_i: int, env_id: String, lv: Dictionary, b: float, s: float) -> 
 	var n := 0
 	var sane := true
 	var min_y := 99.0
+	var min_agl := 99.0
 	var max_x := -99.0
 	var worst_dt := 0.0
 	var peak_awake := 0
@@ -61,6 +62,7 @@ func _throw(char_i: int, env_id: String, lv: Dictionary, b: float, s: float) -> 
 			if not _fin(body.global_position) or not _fin(body.linear_velocity):
 				sane = false
 			min_y = minf(min_y, body.global_position.y)
+			min_agl = minf(min_agl, body.global_position.y - T.ground_y(body.global_position.x, body.global_position.z))
 		var c: Vector3 = main.ragdoll.centre()
 		max_x = maxf(max_x, c.x)
 		if n % 20 == 0:
@@ -73,9 +75,28 @@ func _throw(char_i: int, env_id: String, lv: Dictionary, b: float, s: float) -> 
 	for p in T.pieces:
 		if not is_instance_valid(p) or not p.freeze:
 			broken += 1
-	return {"frames": n, "state": main.state, "score": main.scoring.total(), "skips": main.skips, "limbs": main.limbs_lost, "sane": sane, "min_y": min_y,
+	return {"frames": n, "state": main.state, "score": main.scoring.total(), "skips": main.skips, "limbs": main.limbs_lost, "sane": sane, "min_y": min_y, "min_agl": min_agl,
 		"max_x": max_x, "worst_ms": worst_dt, "awake": peak_awake, "pieces": pieces0, "moved": broken, "oob": main._oob_at >= 0.0, "end": main.ragdoll.centre(),
 		"fire_peak": T.burning_count, "credit": Rules.bank_credit(main.scoring.lines)}
+
+## Can a legal launch (soft-limited pitch, governed speed, lateral aim within +-50 deg) pass through p? (ignores collisions)
+func _reachable(p: Vector3) -> bool:
+	var dx: float = p.x
+	var dz: float = p.z
+	var dist: float = sqrt(dx * dx + dz * dz)
+	if absf(atan2(dz, dx)) > deg_to_rad(50.0) or dist < 1.0:
+		return false
+	var g: float = Rules.g_eff()
+	for pd in range(3, 39, 1):
+		var th: float = deg_to_rad(float(pd))
+		var c: float = cos(th)
+		var den: float = 2.0 * c * c * (dist * tan(th) + 2.3 - p.y)
+		if den <= 0.0:
+			continue
+		var v: float = sqrt(g * dist * dist / den)
+		if v <= 68.0 and v >= 8.0 and Rules.ideal_range(v, th) <= 180.5 and Rules.ideal_apex(v, th) <= 60.5:
+			return true
+	return false
 
 func _signature(T) -> int:
 	var h: int = 17
@@ -95,7 +116,7 @@ func _run() -> void:
 	var ids: Array = []
 	for en in Rules.ENVIRONMENTS:
 		ids.append(str(en["id"]))
-	check(ids.size() == 7 and not ids.has("coming_soon"), "7 environments: %s" % ", ".join(ids))
+	check(ids.size() == 11 and not ids.has("coming_soon"), "11 environments (4 hillside + 5 v13 cities + Grand Fortress + Test Yard): %s" % ", ".join(ids))
 	for en in Rules.ENVIRONMENTS:
 		check(bool(en["playable"]), "%s is playable (no COMING SOON / LOCKED)" % en["id"])
 	var vectors := [[0.6, 0.0], [0.9, 0.35], [1.0, -0.35], [1.3, 0.0], [0.35, 0.0]]
@@ -132,8 +153,14 @@ func _run() -> void:
 		var unreachable := 0
 		for tg in T.targets:
 			var p: Vector3 = tg["pos"]
-			if p.x > 178.0 or p.y > 55.0 or absf(p.z) > 125.0:
+			if not _reachable(p):
 				unreachable += 1
+		if unreachable > 0:
+			var names: Array = []
+			for tg in T.targets:
+				if not _reachable(tg["pos"]):
+					names.append("%s %s" % [tg["name"], tg["pos"]])
+			print("      unreachable: ", names)
 		check(unreachable == 0, "%s: every target is reachable under the launch governor (%d unreachable)" % [id, unreachable])
 		var xs := {}
 		for p in T.pieces:
@@ -174,7 +201,7 @@ func _run() -> void:
 			tot_score += r.score
 			if r.score > 0:
 				runs_with_hits += 1
-			var good: bool = r.state != 1 and r.sane and r.min_y > -3.0 and r.frames > 20
+			var good: bool = r.state != 1 and r.sane and r.min_agl > -1.5 and r.frames > 20
 			if not good:
 				ok_all = false
 			if r.skips > 14 or r.score > 14000:
@@ -188,7 +215,7 @@ func _run() -> void:
 			tot_score += r2.score
 			if r2.score > 0:
 				runs_with_hits += 1
-			var good2: bool = r2.state != 1 and r2.sane and r2.min_y > -3.0 and r2.frames > 20 and r2.max_x < 215.0
+			var good2: bool = r2.state != 1 and r2.sane and r2.min_agl > -1.5 and r2.frames > 20 and r2.max_x < 215.0
 			if not good2:
 				ok_all = false
 			if r2.skips > 14 or r2.score > 20000:

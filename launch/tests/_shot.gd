@@ -13,14 +13,19 @@ func _r():
 	main.start_game(0, main.Rules.env_index(id))
 	for i in 6: await process_frame
 	var cam: Camera3D = main.cam
+	var bd = main.town.get_node("Backdrop")
+	print("BACKDROP vis ", bd.is_visible_in_tree(), " layers ", bd.layers, " cam cull ", cam.cull_mask, " far ", cam.far, " mesh ", bd.mesh.get_aabb())
 	var views := {
 		"launch": [Vector3(-14, 6, 0), Vector3(60, 8, 0)],
 		"mid": [Vector3(30, 28, -70), Vector3(100, 10, 10)],
 		"high": [Vector3(-10, 90, -10), Vector3(100, 5, 0)],
 		"side": [Vector3(110, 60, -150), Vector3(110, 10, 0)],
 		"skim": [Vector3(60, 14, 5), Vector3(130, 14, 5)],
+		"far": [Vector3(150, 120, -20), Vector3(400, 40, 0)],
 	}
 	main.set_process(false)
+	if OS.get_environment("HIDE_FAR") == "1":
+		main.town.get_node("FarCity").visible = false
 	for k in views:
 		var v: Array = views[k]
 		cam.global_position = v[0]
