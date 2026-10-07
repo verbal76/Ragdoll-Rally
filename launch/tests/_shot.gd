@@ -34,4 +34,5 @@ func _r():
 		for i in 3: await process_frame
 		var img: Image = root.get_viewport().get_texture().get_image()
 		img.save_png("%s/%s_%s.png" % [out, id, k])
+		print("RENDER %s %s draw_calls %d primitives %d objects %d" % [id, k, int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)), int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)), int(Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME))])
 	quit()
