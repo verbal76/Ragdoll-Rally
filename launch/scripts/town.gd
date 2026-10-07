@@ -979,6 +979,8 @@ func _make_debris_pool() -> void:
 		debris.append(d)
 
 func _spawn_debris(pos: Vector3, vel: Vector3, n: int) -> void:
+	if debris.is_empty():
+		_make_debris_pool()
 	for i in n:
 		var d: RigidBody3D = debris[_debris_i]
 		_debris_i = (_debris_i + 1) % debris.size()

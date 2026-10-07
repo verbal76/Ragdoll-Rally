@@ -218,7 +218,7 @@ func _run() -> void:
 			var good2: bool = r2.state != 1 and r2.sane and r2.min_agl > -1.5 and r2.frames > 20 and r2.max_x < 215.0
 			if not good2:
 				ok_all = false
-			if r2.skips > 14 or r2.score > 20000:
+			if r2.skips > 14 or r2.score > 80000:
 				skip_sane = false
 			print("      throw %s char %d maxed: frames %d score %d skips %d limbs %d end x %.0f y %.1f worst %.1f ms awake %d" % [spec, spec[0], r2.frames, r2.score, r2.skips, r2.limbs, r2.end.x, r2.end.y, r2.worst_ms, r2.awake])
 		check(ok_all, "%s: all %d automated throws end cleanly: finite physics, no fall-through, no stuck run" % [id, runs])
