@@ -31,6 +31,9 @@ func _run() -> void:
 		await frames(4)
 		var load_ms: int = Time.get_ticks_msec() - t0
 		var T = main.town
+		var n_pieces: int = T.pieces.size()
+		var n_props: int = T.props.size()
+		var n_burn: int = T.fire_nodes.size()
 		var phys_sum := 0.0
 		var phys_max := 0.0
 		var steps := 0
@@ -38,7 +41,7 @@ func _run() -> void:
 		var peak_particles := 0
 		var draw_peak := 0
 		var prim_peak := 0.0
-		for vec in [[0.8, 0.0], [1.0, 0.3], [0.9, -0.3]]:
+		for vec in [[0.9, 0.0], [1.0, 0.3]]:
 			main.start_game(6, Rules.env_index(id))
 			await frames(3)
 			_aim(vec[0], vec[1])
@@ -61,5 +64,5 @@ func _run() -> void:
 						if ch is CPUParticles3D and (ch as CPUParticles3D).emitting:
 							pc += (ch as CPUParticles3D).amount
 					peak_particles = maxi(peak_particles, pc)
-		print("PROFILE %-12s load %4d ms | pieces %4d props %3d burnables %4d | active bodies peak %3d | physics avg %.2f ms max %.2f ms | particles peak %3d | draw calls %d prims %d | splats <= %d" % [id, load_ms, T.pieces.size(), T.props.size(), T.fire_nodes.size(), peak_bodies, phys_sum / maxf(steps, 1), phys_max, peak_particles, draw_peak, int(prim_peak), main.fx.SPLAT_POOL])
+		print("PROFILE %-12s load %4d ms | pieces %4d props %3d burnables %4d | active bodies peak %3d | physics avg %.2f ms max %.2f ms | particles peak %3d | draw calls %d prims %d | splats <= %d" % [id, load_ms, n_pieces, n_props, n_burn, peak_bodies, phys_sum / maxf(steps, 1), phys_max, peak_particles, draw_peak, int(prim_peak), main.fx.SPLAT_POOL])
 	quit()
