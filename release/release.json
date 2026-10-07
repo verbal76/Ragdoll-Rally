@@ -2,6 +2,12 @@
   "product": "Ragdoll Rally Launch",
   "file_stem": "Ragdoll-Rally-Launch",
   "version": 14,
-  "deliver": false,
-  "notes": []
+  "deliver": true,
+  "notes": [
+    "Physical-test build: the new rising hillside cities (Hillside District, Valley Neighborhoods, Rolling Heights, Skyline Hill) - streets, blocks and neighborhoods that climb toward Ragnar.",
+    "Flatter launch arc: a normal pull now flies lower and shorter, into the rising city.",
+    "New red blood splats (stick to the ground and walls) and a small blood spray.",
+    "New fire, smoke, dust and explosion effects.",
+    "Several v13 targets that could not actually be reached were lowered or moved into reach. Grand Fortress and the other v13 cities are still there."
+  ]
 }
