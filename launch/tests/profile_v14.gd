@@ -34,6 +34,8 @@ func _run() -> void:
 		var n_pieces: int = T.pieces.size()
 		var n_props: int = T.props.size()
 		var n_burn: int = T.fire_nodes.size()
+		var samples: Array = []
+		var spikes := 0
 		var phys_sum := 0.0
 		var phys_max := 0.0
 		var steps := 0
@@ -51,7 +53,11 @@ func _run() -> void:
 				await physics_frame
 				n += 1
 				var pt: float = Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0
-				phys_sum += pt
+				if n <= 3 or pt > 100.0:
+					spikes += 1                      # first-contact / broadphase build stalls are reported separately, not averaged
+				else:
+					phys_sum += pt
+					samples.append(pt)
 				phys_max = maxf(phys_max, pt)
 				steps += 1
 				peak_bodies = maxi(peak_bodies, int(Performance.get_monitor(Performance.PHYSICS_3D_ACTIVE_OBJECTS)))
@@ -64,5 +70,12 @@ func _run() -> void:
 						if ch is CPUParticles3D and (ch as CPUParticles3D).emitting:
 							pc += (ch as CPUParticles3D).amount
 					peak_particles = maxi(peak_particles, pc)
-		print("PROFILE %-12s load %4d ms | pieces %4d props %3d burnables %4d | active bodies peak %3d | physics avg %.2f ms max %.2f ms | particles peak %3d | draw calls %d prims %d | splats <= %d" % [id, load_ms, n_pieces, n_props, n_burn, peak_bodies, phys_sum / maxf(steps, 1), phys_max, peak_particles, draw_peak, int(prim_peak), main.fx.SPLAT_POOL])
+		print("PROFILE %-12s load %4d ms | pieces %4d props %3d burnables %4d | active bodies peak %3d | physics avg %.2f ms p95 %.2f ms (%d stalls, worst %.0f ms) | particles peak %3d | draw calls %d prims %d | splats <= %d" % [id, load_ms, n_pieces, n_props, n_burn, peak_bodies, phys_sum / maxf(samples.size(), 1), _p95(samples), spikes, phys_max, peak_particles, draw_peak, int(prim_peak), main.fx.SPLAT_POOL])
 	quit()
+
+func _p95(a: Array) -> float:
+	if a.is_empty():
+		return 0.0
+	var b: Array = a.duplicate()
+	b.sort()
+	return float(b[int(float(b.size() - 1) * 0.95)])
