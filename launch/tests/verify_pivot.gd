@@ -301,7 +301,8 @@ func _scenes() -> void:
 	ui._refresh()
 	ui._on_go()
 	check(got.size() == 1 and got[0] == [0, Rules.env_index("yard")] and not ui._go.disabled, "selector: LAUNCH on the Test Yard starts the game")
-	ui._step_env(1)
+	ui.env_idx = Rules.env_index("downtown")
+	ui._refresh()
 	check(not ui._go.disabled and str(Rules.ENVIRONMENTS[ui.env_idx]["id"]) == "downtown", "selector: Downtown is playable (nothing is locked)")
 	var sw := InputEventMouseButton.new()
 	sw.button_index = MOUSE_BUTTON_LEFT

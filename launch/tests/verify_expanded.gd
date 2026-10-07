@@ -317,7 +317,8 @@ func _run() -> void:
 		check(main.cam.global_position.y > 1.5, "%s: camera stays above ground" % nm)
 		print("      end=%s score=%d worst_frame=%.1fms active=%d" % [str(r.end), r.score, r.worst_ms, r.active])
 	var od: Dictionary = await _shoot(main, 1.45, 0.0)
-	check(od.end.x > 150.0 and od.score > 1000, "full overdrive reaches the grand castle (x=%.0f, score %d)" % [od.end.x, od.score])
+	# v14: the Castle Crown tower now stands at x = 150 (it was beyond the governor's reach at 174-189), so reaching x > 140 means reaching the castle
+	check(od.end.x > 140.0 and od.score > 1000, "full overdrive reaches the grand castle (x=%.0f, score %d)" % [od.end.x, od.score])
 	# ---- stress: smash through the densest cluster
 	var st: Dictionary = await _shoot(main, 0.12, 0.0)
 	check(st.active <= main.town.ACTIVE_CAP + 10, "stress shot: peak active released pieces %d" % st.active)
