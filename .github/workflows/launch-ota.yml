@@ -4,7 +4,7 @@ name: Launch OTA publish
 # on their next launch, so it is never triggered automatically.
 on:
   push:
-    branches: [claude/launch-api36-modernization, claude/launch-expanded-playfield]
+    branches: [claude/launch-api36-modernization, claude/launch-expanded-playfield, claude/launch-gameplay-pivot]
     paths:
       - 'launch/ota/publish_request.json'   # committing this file IS the authorization to publish
   workflow_dispatch:
