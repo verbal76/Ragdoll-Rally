@@ -74,7 +74,10 @@ func _throw(env_id: String, lv: Dictionary, b: float, s: float) -> Dictionary:
 			cam_samples += 1
 			var cp: Vector3 = main.cam.global_position
 			var focus: Vector3 = main.ragdoll.centre()
-			if CamSafe.inside_solid(space, cp, 0.5) or CamSafe.clear_fraction(space, cp, focus, 0.15) < 0.97:
+			# the lens must never be inside standing geometry; a line of sight is required unless Ragnar himself is inside a structure
+			# (tunnelling through a wall: nothing can see him there until he comes out)
+			var focus_buried: bool = CamSafe.inside_solid(space, focus, 0.6)
+			if CamSafe.inside_solid(space, cp, 0.5) or (not focus_buried and CamSafe.clear_fraction(space, cp, focus, 0.15) < 0.97):
 				cam_bad += 1
 		if n % 15 == 0:
 			var awake := 0
