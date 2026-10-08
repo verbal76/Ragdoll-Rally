@@ -180,22 +180,29 @@ func ground_y(x: float, z: float) -> float:
 func ground_normal(x: float, z: float) -> Vector3:
 	return terrain.normal(x, z) if terrain != null else Vector3.UP
 
+var launcher_nodes: Array[Node3D] = []      # the slingshot's posts / bands (hidden when another launcher is selected)
+
 func _launcher() -> void:
 	var wood := Color(0.55, 0.34, 0.18)
 	var base := _box_mesh(Vector3(3.0, 0.5, 4.4), wood)
 	base.position = Vector3(-0.2, 0.25, 0)
 	add_child(base)
+	launcher_nodes.append(base)
 	for z in [-POLE_Z, POLE_Z]:
 		var pole := _box_mesh(Vector3(0.4, POLE_TOP.y, 0.4), wood)
 		pole.position = Vector3(0, POLE_TOP.y * 0.5, z)
 		add_child(pole)
+		launcher_nodes.append(pole)
 		var knob := _box_mesh(Vector3(0.6, 0.3, 0.6), Color(0.8, 0.2, 0.2))
 		knob.position = Vector3(0, POLE_TOP.y + 0.1, z)
 		add_child(knob)
+		launcher_nodes.append(knob)
 	band_l = _box_mesh(Vector3(0.1, 0.1, 1.0), Color(0.9, 0.15, 0.2))
 	band_r = _box_mesh(Vector3(0.1, 0.1, 1.0), Color(0.9, 0.15, 0.2))
 	add_child(band_l)
 	add_child(band_r)
+	launcher_nodes.append(band_l)
+	launcher_nodes.append(band_r)
 
 ## Stretch both bands from the pole tops to `pull` (world position of the pouch).
 func set_band(pull: Vector3) -> void:
@@ -1207,6 +1214,8 @@ func explode(center: Vector3, radius: float, power: float) -> Dictionary:
 		for p in pieces.duplicate():
 			if p.get_meta("capped", false):
 				continue
+			if Destruction.is_shell(p):
+				continue                                        # a building we did not open this blast stays standing (never a flying whole-building slab)
 			var d: float = p.global_position.distance_to(c)
 			if d > radius:
 				continue
@@ -1394,6 +1403,16 @@ func _glass_pane(pos: Vector3, size: Vector3) -> StaticBody3D:
 	add_child(b)
 	glass.append(b)
 	return b
+
+## A light static fixture (awning, sign, pole) is knocked out of the world; it comes back on reset like burnt statics.
+func smash_static(b: StaticBody3D, dir: Vector3, speed: float) -> bool:
+	if b.collision_layer == 0:
+		return false
+	b.collision_layer = 0
+	b.visible = false
+	_burnt_static.append(b)
+	_spawn_debris(b.global_position, dir * speed * 0.3, 3)
+	return true
 
 func break_glass(b: StaticBody3D) -> bool:
 	if b.collision_layer == 0:

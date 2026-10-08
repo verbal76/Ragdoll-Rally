@@ -456,11 +456,12 @@ static func soft_cap(x: float, cap: float, knee: float = SOFT_KNEE) -> float:
 	return k + span * (1.0 - exp(-(x - k) / span))
 
 ## Gesture pitch (degrees) -> launch pitch. Identity below SOFT_PITCH_START_DEG, then compressed toward MAX_PITCH_DEG.
-static func soft_pitch_deg(raw_deg: float) -> float:
+static func soft_pitch_deg(raw_deg: float, max_deg: float = MAX_PITCH_DEG) -> float:
 	var r: float = maxf(raw_deg, MIN_PITCH_DEG)
-	if r <= SOFT_PITCH_START_DEG:
+	var start: float = max_deg * (SOFT_PITCH_START_DEG / MAX_PITCH_DEG)
+	if r <= start:
 		return r
-	return soft_cap(r, MAX_PITCH_DEG, SOFT_PITCH_START_DEG / MAX_PITCH_DEG)
+	return soft_cap(r, max_deg, start / max_deg)
 
 static func ideal_range(speed: float, pitch_rad: float) -> float:
 	return speed * speed * sin(2.0 * pitch_rad) / g_eff()
@@ -484,11 +485,11 @@ static func governed_speed(speed: float, pitch_rad: float, fx: Dictionary = {}) 
 
 ## The launch direction for a gesture: raw pitch from the elevation component, then soft-limited.
 ## heading = unit horizontal direction; up = tan-like elevation component the gesture produced.
-static func launch_dir(heading: Vector3, up: float) -> Vector3:
+static func launch_dir(heading: Vector3, up: float, max_deg: float = MAX_PITCH_DEG) -> Vector3:
 	var h := Vector3(heading.x, 0.0, heading.z)
 	h = h.normalized() if h.length() > 0.0001 else Vector3.RIGHT
 	var raw_deg: float = rad_to_deg(atan(maxf(up, 0.0)))
-	var pitch: float = deg_to_rad(soft_pitch_deg(raw_deg))
+	var pitch: float = deg_to_rad(soft_pitch_deg(raw_deg, max_deg))
 	return (h * cos(pitch) + Vector3.UP * sin(pitch)).normalized()
 
 # ----------------------------------------------------------------- economy: SCORE vs BANKED CREDITS

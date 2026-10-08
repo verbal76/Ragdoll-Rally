@@ -5,6 +5,8 @@ extends Node3D
 const Rules := preload("res://scripts/rules.gd")
 const Destruction := preload("res://scripts/destruction.gd")
 const CamSafe := preload("res://scripts/cam_safe.gd")
+const Launchers := preload("res://scripts/launchers.gd")
+const LauncherRig := preload("res://scripts/launcher_rig.gd")
 const Fx := preload("res://scripts/fx.gd")
 const SelectUI := preload("res://scripts/select_ui.gd")
 
@@ -17,7 +19,7 @@ const MAX_SPEED := 50.0
 const CLASSIC_MIN_SPEED := 9.0
 const CLASSIC_MAX_SPEED := 32.0
 const MIN_POWER := 0.12
-const TRAJ_DOTS := 30
+const TRAJ_DOTS := 48
 const AIM_MAX_PX := 240.0         # drag length (virtual px) for full power; measured along the diagonal pull
 const SIDE_GAIN := 1.0            # lateral aim gain (was 0.7 in G1: far-left/right targets need up to ~45 deg)
 const MAX_FLIGHT_S := 11.0
@@ -99,6 +101,27 @@ var slowmo_enabled := true
 var _slow_event := 0.0
 var _slow_clock := 0.0
 var _cam_block_t: float = -9.0
+# ---- launch devices (see launchers.gd)
+var launcher_levels: Dictionary = Launchers.empty_levels()   # id -> owned level (0 = not owned)
+var launcher_id: String = "slingshot"
+var L: Dictionary = Launchers.stats("slingshot", 1)          # stats of the selected launcher at its level
+var _aim_yaw: float = 0.0                                    # direct-fire aim (degrees)
+var _aim_pitch: float = 6.0
+var _charge: float = 0.0                                     # railgun charge 0..1
+var _charging := false
+var _windup: float = -1.0                                    # >= 0 while the catapult arm is winding up
+var bullseye: Vector3 = Vector3(120, 0, 0)                  # artillery target
+var bullseye_valid := false
+var _fire_v: float = -1.0                                    # explicit launch speed/direction for non-arc launchers
+var _fire_dir := Vector3.RIGHT
+var _flat_until: float = -1.0                                # direct-fire rounds fly nearly straight until then
+var _rig: Node3D = null
+var _marker: MeshInstance3D = null
+var btn_fire: Button
+var btn_launchers: Button
+var launcher_panel: Control
+var _lp_rows: Dictionary = {}
+var last_shot: Dictionary = {}                               # test/evidence: speed, dir, launcher of the last launch
 var craters := 0
 var _secondary_blasts := 0
 var _pending_blasts: Array = []
@@ -253,9 +276,26 @@ func _setup_camera() -> void:
 ## pull-back direction (world -X) points toward a LOWER screen corner and more of the field
 ## to the left/right is visible.
 func _compute_aim_camera() -> void:
+	var md: String = str(L["mode"])
+	if md == "topdown":
+		# tactical view: straight down over the board, +X to the right, the launcher at the left edge
+		var vp: Vector2 = get_viewport().get_visible_rect().size if is_inside_tree() else Vector2(1280, 720)
+		var aspect: float = maxf(vp.x / maxf(vp.y, 1.0), 1.2)
+		var span: float = float(L["max_range"]) + 50.0
+		var h: float = clampf(span / (2.0 * tan(deg_to_rad(28.0)) * aspect), 110.0, 280.0)
+		var cx: float = span * 0.5 - 25.0
+		_cam_aim_xf = Transform3D(Basis.IDENTITY, Vector3(cx, h, 0.0)).looking_at(Vector3(cx, 0.0, 0.0), Vector3(0, 0, -1))
+		_update_aim_basis()
+		return
+	if md == "direct" or md == "charge":
+		var dir: Vector3 = Launchers.direct_dir(_aim_yaw, _aim_pitch)
+		_cam_aim_xf = Transform3D(Basis.IDENTITY, LAUNCH_ORIGIN - dir * 11.0 + Vector3(0, 3.2, 0)).looking_at(LAUNCH_ORIGIN + dir * 60.0 + Vector3(0, 1.0, 0), Vector3.UP)
+		_update_aim_basis()
+		return
 	var zs: float = -1.0 if view_right else 1.0           # camera sits on the +Z side (pull toward lower-left) or -Z side
 	var fh := Vector3(cos(deg_to_rad(30.0)), 0.0, -sin(deg_to_rad(30.0)) * zs)
-	var pos: Vector3 = LAUNCH_ORIGIN - fh * 26.0 + Vector3(0, 13.0, 0)
+	var back: float = 26.0 + (14.0 if launcher_id == "catapult" else 0.0)
+	var pos: Vector3 = LAUNCH_ORIGIN - fh * back + Vector3(0, 13.0 + (8.0 if launcher_id == "catapult" else 0.0), 0)
 	_cam_aim_xf = Transform3D(Basis.IDENTITY, pos).looking_at(LAUNCH_ORIGIN + fh * 22.0 + Vector3(0, 0.5, 0), Vector3.UP)
 	_update_aim_basis()
 
@@ -401,8 +441,15 @@ func _setup_ui() -> void:
 	btn_change.add_theme_font_size_override("font_size", 34)
 	btn_change.focus_mode = Control.FOCUS_NONE
 	btn_change.pressed.connect(open_select)
+	btn_launchers = Button.new()
+	btn_launchers.text = "LAUNCHERS"
+	btn_launchers.custom_minimum_size = Vector2(300, 84)
+	btn_launchers.add_theme_font_size_override("font_size", 30)
+	btn_launchers.focus_mode = Control.FOCUS_NONE
+	btn_launchers.pressed.connect(open_launchers)
 	row.add_child(btn_again)
 	row.add_child(btn_upgrades)
+	row.add_child(btn_launchers)
 	row.add_child(btn_change)
 	vb.add_child(row)
 	result_panel.visible = false
@@ -443,6 +490,32 @@ func _setup_ui() -> void:
 	btn_reset.pressed.connect(_on_again)
 	ui.add_child(btn_reset)
 	_build_upgrade_panel()
+	_build_launcher_panel()
+	btn_fire = Button.new()
+	btn_fire.text = "FIRE!"
+	btn_fire.focus_mode = Control.FOCUS_NONE
+	btn_fire.add_theme_font_size_override("font_size", 60)
+	btn_fire.custom_minimum_size = Vector2(320, 120)
+	btn_fire.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	btn_fire.offset_left = -350
+	btn_fire.offset_top = -150
+	btn_fire.offset_right = -30
+	btn_fire.offset_bottom = -30
+	btn_fire.visible = false
+	btn_fire.pressed.connect(fire)
+	ui.add_child(btn_fire)
+	var btn_aim_l := Button.new()                  # in-aim launcher switch, top-left under the HUD line
+	btn_aim_l.text = "LAUNCHER"
+	btn_aim_l.focus_mode = Control.FOCUS_NONE
+	btn_aim_l.add_theme_font_size_override("font_size", 24)
+	btn_aim_l.custom_minimum_size = Vector2(190, 64)
+	btn_aim_l.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	btn_aim_l.offset_left = 16
+	btn_aim_l.offset_top = 70
+	btn_aim_l.offset_right = 206
+	btn_aim_l.offset_bottom = 134
+	btn_aim_l.pressed.connect(open_launchers)
+	ui.add_child(btn_aim_l)
 
 func _build_upgrade_panel() -> void:
 	upgrade_panel = Control.new()
@@ -549,6 +622,94 @@ func buy(key: String) -> bool:
 	_save_progress()
 	_update_hud()
 	return true
+
+func _build_launcher_panel() -> void:
+	launcher_panel = Control.new()
+	launcher_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	launcher_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	launcher_panel.visible = false
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.65)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	launcher_panel.add_child(dim)
+	var pc := PanelContainer.new()
+	pc.anchor_left = 0.5
+	pc.anchor_right = 0.5
+	pc.anchor_top = 0.5
+	pc.anchor_bottom = 0.5
+	pc.offset_left = -620
+	pc.offset_right = 620
+	pc.offset_top = -340
+	pc.offset_bottom = 340
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.05, 0.07, 0.12, 0.97)
+	sb.set_corner_radius_all(24)
+	sb.set_content_margin_all(14)
+	pc.add_theme_stylebox_override("panel", sb)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 6)
+	pc.add_child(vb)
+	var title := _label(36, HORIZONTAL_ALIGNMENT_CENTER)
+	title.text = "LAUNCHERS  -  same city, different catastrophe"
+	vb.add_child(title)
+	var bl := _label(24, HORIZONTAL_ALIGNMENT_CENTER)
+	bl.name = "LBank"
+	vb.add_child(bl)
+	for r in Launchers.ROSTER:
+		var lid: String = str(r["id"])
+		var cell := HBoxContainer.new()
+		cell.add_theme_constant_override("separation", 8)
+		var l := _label(19, HORIZONTAL_ALIGNMENT_LEFT)
+		l.custom_minimum_size = Vector2(700, 0)
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		cell.add_child(l)
+		var bb := Button.new()
+		bb.focus_mode = Control.FOCUS_NONE
+		bb.custom_minimum_size = Vector2(230, 80)
+		bb.add_theme_font_size_override("font_size", 22)
+		bb.pressed.connect(func():
+			buy_launcher(lid)
+			_refresh_launchers())
+		cell.add_child(bb)
+		var ub := Button.new()
+		ub.focus_mode = Control.FOCUS_NONE
+		ub.custom_minimum_size = Vector2(190, 80)
+		ub.add_theme_font_size_override("font_size", 24)
+		ub.pressed.connect(func():
+			select_launcher(lid)
+			_refresh_launchers())
+		cell.add_child(ub)
+		vb.add_child(cell)
+		_lp_rows[lid] = {"label": l, "buy": bb, "use": ub}
+	var close := Button.new()
+	close.text = "CLOSE"
+	close.focus_mode = Control.FOCUS_NONE
+	close.custom_minimum_size = Vector2(300, 66)
+	close.add_theme_font_size_override("font_size", 30)
+	close.pressed.connect(func(): launcher_panel.visible = false)
+	vb.add_child(close)
+	launcher_panel.add_child(pc)
+	ui.add_child(launcher_panel)
+
+func _refresh_launchers() -> void:
+	(launcher_panel.find_child("LBank", true, false) as Label).text = "Credits: %d" % bank
+	for r in Launchers.ROSTER:
+		var lid: String = str(r["id"])
+		var lv: int = int(launcher_levels.get(lid, 0))
+		var cost: int = Launchers.next_cost(lid, lv)
+		var row: Dictionary = _lp_rows[lid]
+		(row["label"] as Label).text = "%s  [%s]  %s\n%s" % [str(r["name"]), str(r["tag"]), ("Lv %d/5" % lv) if lv > 0 else "LOCKED", str(r["desc"])]
+		var bb := row["buy"] as Button
+		bb.text = "MAX" if cost < 0 else (("UPGRADE %d" % cost) if lv > 0 else ("UNLOCK %d" % cost))
+		bb.disabled = cost < 0 or bank < cost
+		var ub := row["use"] as Button
+		ub.text = "IN USE" if lid == launcher_id else "USE"
+		ub.disabled = lv <= 0 or lid == launcher_id
+
+func open_launchers() -> void:
+	_refresh_launchers()
+	launcher_panel.visible = true
 
 func open_upgrades() -> void:
 	_refresh_upgrades()
@@ -698,17 +859,23 @@ func reset() -> void:
 	_air_drag = false
 	cam_event = 0.0
 	_last_boom = -9.0
+	_apply_launcher()
 	_compute_aim_camera()
-	_set_aim_pose(Vector3.RIGHT, 0.0)
+	if str(L["mode"]) == "direct" or str(L["mode"]) == "charge":
+		_direct_move(0.0, 0.0)
+	elif str(L["mode"]) != "topdown":
+		_set_aim_pose(Vector3.RIGHT, 0.0)
 	result_panel.visible = false
 	if upgrade_panel:
 		upgrade_panel.visible = false
+	if launcher_panel:
+		launcher_panel.visible = false
 	if select_ui:
 		select_ui.visible = false
 	btn_skip.visible = false
 	lbl_combo.visible = false
 	lbl_hint.visible = true
-	lbl_hint.text = "DRAG BACK, AIM, RELEASE!" if attempt <= 1 else "AGAIN! Drag back and let go."
+	lbl_hint.text = _hint_text()
 	for d in _dots:
 		d.visible = false
 	cam.global_transform = _cam_aim_xf
@@ -737,6 +904,222 @@ func _set_aim_pose(dir: Vector3, power: float) -> void:
 	ragdoll.set_pose(Transform3D(b, pos))
 	town.set_band(pos)
 
+# ---------------------------------------------------------------- launch devices
+## Choose an owned launcher. Returns false if it is not owned.
+func select_launcher(id: String) -> bool:
+	if int(launcher_levels.get(id, 0)) <= 0:
+		return false
+	launcher_id = id
+	L = Launchers.stats(id, int(launcher_levels[id]))
+	_save_progress()
+	if state == State.AIM:
+		_apply_launcher()
+	return true
+
+## Unlock (level 0 -> 1) or upgrade (1..4 -> +1) a launcher. Spends banked credits.
+func buy_launcher(id: String) -> bool:
+	var lv: int = int(launcher_levels.get(id, 0))
+	var cost: int = Launchers.next_cost(id, lv)
+	if cost < 0 or bank < cost:
+		return false
+	bank -= cost
+	launcher_levels[id] = lv + 1
+	if id == launcher_id:
+		L = Launchers.stats(id, lv + 1)
+	_save_progress()
+	_update_hud()
+	return true
+
+## Rebuild the launcher rig / visibility / aim defaults for the selected launcher (called on reset and on selection).
+func _apply_launcher() -> void:
+	if _rig != null:
+		_rig.queue_free()
+		_rig = null
+	var other: bool = launcher_id != "slingshot"
+	if is_instance_valid(town):
+		for n in town.launcher_nodes:
+			if is_instance_valid(n):
+				(n as Node3D).visible = not other
+	if other:
+		_rig = LauncherRig.new()
+		add_child(_rig)
+		(_rig as LauncherRig).build(launcher_id)
+	_charging = false
+	_charge = 0.0
+	_windup = -1.0
+	_fire_v = -1.0
+	_aim_yaw = 0.0
+	_aim_pitch = 8.0 if str(L["mode"]) == "direct" else 3.0
+	if str(L["mode"]) == "topdown":
+		bullseye = Vector3(clampf(0.5 * (float(L["min_range"]) + float(L["max_range"])), 60.0, 200.0), 0.0, 0.0)
+		bullseye.y = town.ground_y(bullseye.x, bullseye.z) if is_instance_valid(town) else 0.0
+		_validate_bullseye()
+	_compute_aim_camera()
+	_update_launcher_ui()
+	if state == State.AIM and ragdoll:
+		var m: String = str(L["mode"])
+		if m == "direct" or m == "charge":
+			_direct_move(0.0, 0.0)
+		else:
+			_set_aim_pose(Vector3.RIGHT, 0.0)
+		cam.global_transform = _cam_aim_xf
+	lbl_hint.text = _hint_text()
+
+func _hint_text() -> String:
+	match str(L["mode"]):
+		"direct":
+			return "DRAG TO AIM, RELEASE TO FIRE"
+		"charge":
+			return "DRAG TO AIM, RELEASE TO CHARGE"
+		"topdown":
+			return "TOUCH THE MAP: BULLSEYE, THEN FIRE"
+	return "DRAG BACK, AIM, RELEASE!" if attempt <= 1 else "AGAIN! Drag back and let go."
+
+func _update_launcher_ui() -> void:
+	if btn_fire:
+		btn_fire.visible = state == State.AIM and str(L["mode"]) == "topdown"
+		btn_fire.disabled = not bullseye_valid
+	if btn_launchers:
+		btn_launchers.text = "%s Lv%d" % [str(L["name"]), int(L["level"])]
+	if _marker:
+		_marker.visible = false
+
+## Direct-fire aiming: finger movement turns the gun (yaw / pitch within the launcher's mechanical limits) and the camera sits behind the barrel.
+func _direct_move(dx: float, dy: float) -> void:
+	_aim_yaw = clampf(_aim_yaw + dx * 0.16 * (-1.0 if view_right else 1.0), -float(L["yaw"]), float(L["yaw"]))
+	_aim_pitch = clampf(_aim_pitch - dy * 0.10, float(L["pitch_min"]), float(L["pitch_max"]))
+	var dir: Vector3 = Launchers.direct_dir(_aim_yaw, _aim_pitch)
+	aim_dir = dir
+	aim_power = 1.0
+	_set_aim_pose(dir, 0.0)
+	if _rig:
+		(_rig as LauncherRig).set_aim(dir)
+	var cp: Vector3 = LAUNCH_ORIGIN - dir * 11.0 + Vector3(0, 3.2, 0)
+	_cam_aim_xf = Transform3D(Basis.IDENTITY, cp).looking_at(LAUNCH_ORIGIN + dir * 60.0 + Vector3(0, 1.0, 0), Vector3.UP)
+	_update_direct_preview()
+
+## Sight line + target marker. The marker is where the sight line meets the world; the round is aimed to ARRIVE there (the
+## ballistic drop is compensated), but it is still a real flight: anything in the path is hit first.
+func _update_direct_preview() -> void:
+	if not is_inside_tree():
+		return
+	var dir: Vector3 = Launchers.direct_dir(_aim_yaw, _aim_pitch)
+	var space: PhysicsDirectSpaceState3D = get_viewport().world_3d.direct_space_state
+	var q := PhysicsRayQueryParameters3D.create(LAUNCH_ORIGIN + dir * 3.0, LAUNCH_ORIGIN + dir * 420.0, 1 | 4)
+	var hit: Dictionary = space.intersect_ray(q)
+	var dist: float = 420.0
+	if not hit.is_empty():
+		dist = LAUNCH_ORIGIN.distance_to(hit["position"])
+	var n_dots: int = _dots.size()
+	for i in n_dots:
+		_dots[i].global_position = LAUNCH_ORIGIN + dir * (6.0 + (dist - 6.0) * float(i) / float(n_dots))
+		_dots[i].visible = dist > 12.0
+	_ensure_marker()
+	if not hit.is_empty():
+		_marker.visible = true
+		var nrm: Vector3 = hit["normal"]
+		_marker.global_position = hit["position"] + nrm * 0.15
+		_marker.look_at(_marker.global_position + nrm, Vector3.UP if absf(nrm.y) < 0.9 else Vector3.RIGHT)
+		_marker.scale = Vector3.ONE * clampf(dist * 0.03, 1.2, 8.0)
+	else:
+		_marker.visible = false
+
+## The launch direction that makes the round arrive at the sight marker (or the raw sight line if nothing is in sight).
+func _direct_launch_dir() -> Vector3:
+	var sight: Vector3 = Launchers.direct_dir(_aim_yaw, _aim_pitch)
+	if not is_inside_tree():
+		return sight
+	var space: PhysicsDirectSpaceState3D = get_viewport().world_3d.direct_space_state
+	var hit: Dictionary = space.intersect_ray(PhysicsRayQueryParameters3D.create(LAUNCH_ORIGIN + sight * 3.0, LAUNCH_ORIGIN + sight * 420.0, 1 | 4))
+	if hit.is_empty():
+		return sight
+	var tp: Vector3 = hit["position"]
+	var d: Vector3 = tp - LAUNCH_ORIGIN
+	var horiz: float = Vector2(d.x, d.z).length()
+	var speed: float = Launchers.direct_speed(L, float(fxp.get("launch_mult", 1.0)))
+	var pitch: float = Launchers.compensate_pitch(L, speed, horiz, d.y, Rules.g_eff())
+	var yaw: float = rad_to_deg(atan2(d.z, maxf(d.x, 0.001)))
+	return Launchers.direct_dir(yaw, pitch)
+
+func _ensure_marker() -> void:
+	if _marker != null:
+		return
+	_marker = MeshInstance3D.new()
+	var tm := TorusMesh.new()
+	tm.inner_radius = 0.7
+	tm.outer_radius = 1.0
+	tm.rings = 24
+	tm.ring_segments = 6
+	var mt := StandardMaterial3D.new()
+	mt.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mt.albedo_color = Color(1.0, 0.25, 0.15)
+	mt.no_depth_test = true
+	tm.material = mt
+	_marker.mesh = tm
+	_marker.rotation_degrees = Vector3(90, 0, 0)
+	_marker.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_marker.visible = false
+	add_child(_marker)
+
+## Artillery: the bullseye follows the touch; valid when inside the target ring and a lob can reach it.
+func _set_bullseye(screen: Vector2) -> void:
+	var o: Vector3 = cam.project_ray_origin(screen)
+	var nrm: Vector3 = cam.project_ray_normal(screen)
+	if absf(nrm.y) < 0.05:
+		return
+	var gy := 0.0
+	var p := Vector3.ZERO
+	for i in 3:
+		var t: float = (gy - o.y) / nrm.y
+		p = o + nrm * t
+		gy = town.ground_y(p.x, p.z) if is_instance_valid(town) else 0.0
+	bullseye = Vector3(p.x, gy, p.z)
+	_validate_bullseye()
+
+func _validate_bullseye() -> void:
+	var d: float = Vector2(bullseye.x - LAUNCH_ORIGIN.x, bullseye.z - LAUNCH_ORIGIN.z).length()
+	var sol: Dictionary = Launchers.solve_lob(LAUNCH_ORIGIN, bullseye + Vector3(0, 1.0, 0), 66.0, Rules.g_eff())
+	var vmax: float = Launchers.direct_speed(L, float(fxp.get("launch_mult", 1.0)))
+	bullseye_valid = d >= float(L["min_range"]) and d <= float(L["max_range"]) and bool(sol["ok"]) and float(sol["speed"]) <= vmax and bullseye.x > 0.0
+	_ensure_marker()
+	_marker.visible = true
+	_marker.global_position = bullseye + Vector3(0, 0.3, 0)
+	_marker.rotation_degrees = Vector3(0, 0, 0)
+	_marker.basis = Basis.IDENTITY
+	_marker.rotation_degrees = Vector3(90, 0, 0)
+	_marker.scale = Vector3.ONE * 5.0
+	((_marker.mesh as TorusMesh).material as StandardMaterial3D).albedo_color = Color(0.2, 1.0, 0.3) if bullseye_valid else Color(1.0, 0.2, 0.15)
+	if btn_fire:
+		btn_fire.disabled = not bullseye_valid
+	if _rig and bool(sol["ok"]):
+		(_rig as LauncherRig).set_aim(sol["dir"])
+	if bool(sol["ok"]):
+		_set_aim_pose(sol["dir"], 0.0)
+
+## Per-tick aim state: catapult wind-up and railgun charge.
+func _tick_aim(dt: float) -> void:
+	if _windup >= 0.0:
+		_windup -= dt
+		trauma = maxf(trauma, 0.12)
+		if _windup < 0.0:
+			_windup = -1.0
+			_launch_now()
+		return
+	if _charging:
+		_charge = minf(_charge + dt / maxf(float(L["charge_t"]), 0.1), 1.0)
+		if _rig:
+			(_rig as LauncherRig).set_charge(_charge)
+		trauma = maxf(trauma, 0.08 + 0.35 * _charge * _charge)       # the machine strains
+		cam.fov = lerpf(cam.fov, 56.0 - 12.0 * _charge, 1.0 - exp(-6.0 * dt))
+		if is_instance_valid(ragdoll) and _charge > 0.3:
+			var pos: Vector3 = LAUNCH_ORIGIN + aim_dir * (1.0 + 4.0 * randf())
+			if randf() < _charge * 0.6:
+				fx.sparks(pos, Vector3.UP)
+		lbl_hint.visible = true
+		lbl_hint.text = "CHARGING  %d%%" % int(_charge * 100.0)
+		if _charge >= 1.0:
+			fire()
+
 # ---------------------------------------------------------------- input
 func _unhandled_input(event: InputEvent) -> void:
 	if state == State.SELECT:
@@ -749,18 +1132,28 @@ func _unhandled_input(event: InputEvent) -> void:
 				return
 			if state == State.RESULT:
 				reset()   # tap anywhere = instant retry, and the same touch starts the next aim
-			if state == State.AIM:
+			if state == State.AIM and not _charging and _windup < 0.0:
 				dragging = true
 				drag_start = event.position
 				drag_vec = Vector2.ZERO
 				lbl_hint.visible = false
+				if str(L["mode"]) == "topdown":
+					_set_bullseye(event.position)
 		else:
 			if _air_drag:
 				_air_drag = false
 				air_input = 0.0
 			if dragging:
 				dragging = false
-				if state == State.AIM:
+				var md: String = str(L["mode"])
+				if state == State.AIM and md == "direct":
+					fire()
+				elif state == State.AIM and md == "charge":
+					_charging = true
+					_charge = 0.0
+				elif state == State.AIM and md == "topdown":
+					pass                                  # the FIRE button commits the shot
+				elif state == State.AIM:
 					if aim_power >= MIN_POWER:
 						fire()
 					else:
@@ -771,8 +1164,14 @@ func _unhandled_input(event: InputEvent) -> void:
 						bar_bg.visible = false
 	elif event is InputEventMouseMotion:
 		if dragging and state == State.AIM:
-			drag_vec = event.position - drag_start
-			_update_aim()
+			var md2: String = str(L["mode"])
+			if md2 == "direct" or md2 == "charge":
+				_direct_move(event.relative.x, event.relative.y)
+			elif md2 == "topdown":
+				_set_bullseye(event.position)
+			else:
+				drag_vec = event.position - drag_start
+				_update_aim()
 		elif _air_drag and state == State.FLIGHT:
 			air_input = clampf((event.position.x - _air_start.x) / 160.0, -1.0, 1.0)
 
@@ -788,13 +1187,13 @@ func _update_aim() -> void:
 	if p.length() > OVERDRIVE_MAX:
 		p = p.normalized() * OVERDRIVE_MAX
 	aim_power = p.length()                                # 0..1 = the old power range, 1..1.45 = overdrive
-	var up: float = clampf(p.y, 0.05, 1.0) * (1.6 if classic else Rules.AIM_ELEV_GAIN)   # classic = G1/G2 elevation; pivot launches flatter and faster
+	var up: float = clampf(p.y, 0.05, 1.0) * (1.6 if classic else _elev_gain())   # classic = G1/G2 elevation; pivot launches flatter and faster
 	var side: float = -clampf(p.x, -1.0, 1.0) * SIDE_GAIN
 	if classic:
 		aim_dir = Vector3(1.0, up, side).normalized()
 	else:
 		# v13: the upward angle is soft-limited (Rules.soft_pitch_deg) so no gesture can fire a near-vertical rocket
-		aim_dir = Rules.launch_dir(Vector3(1.0, 0.0, side), up / sqrt(1.0 + side * side))
+		aim_dir = Rules.launch_dir(Vector3(1.0, 0.0, side), up / sqrt(1.0 + side * side), float(L["pitch_max"]))
 	_set_aim_pose(aim_dir, aim_power)
 	_update_preview()
 	bar_bg.visible = true
@@ -823,42 +1222,118 @@ func _agl(p: Vector3) -> float:
 	return p.y - (town.ground_y(p.x, p.z) if is_instance_valid(town) else 0.0)
 
 func launch_speed() -> float:
-	var v: float = speed_for_power(aim_power, classic) * (1.0 if classic else float(fxp.get("launch_mult", 1.0)))
+	var v: float = speed_for_power(aim_power, classic) * (1.0 if classic else float(fxp.get("launch_mult", 1.0)) * float(L["speed"]))
 	if classic:
 		return v
-	# v13: range/apex governor - no throw can fly over the whole playfield or reach the world wall
-	return Rules.governed_speed(v, asin(clampf(aim_dir.y, -1.0, 1.0)), fxp)
+	# v13: range/apex governor - no throw can fly over the whole playfield or reach the world wall. The launcher scales the caps.
+	var fl: Dictionary = fxp
+	if float(L["range_mult"]) != 1.0 or float(L["apex_mult"]) != 1.0:
+		fl = fxp.duplicate()
+		fl["range_cap"] = float(fxp["range_cap"]) * float(L["range_mult"])
+		fl["apex_cap"] = float(fxp["apex_cap"]) * float(L["apex_mult"])
+	return Rules.governed_speed(v, asin(clampf(aim_dir.y, -1.0, 1.0)), fl)
+
+## Elevation gain of the pull gesture: scaled so a launcher with a steeper maximum pitch (catapult) can actually reach it.
+func _elev_gain() -> float:
+	var pm: float = float(L["pitch_max"])
+	return Rules.AIM_ELEV_GAIN * tan(deg_to_rad(pm + 6.0)) / tan(deg_to_rad(46.0))
 
 func _update_preview() -> void:
 	var v: Vector3 = aim_dir * launch_speed()
 	var p0: Vector3 = ragdoll.centre()
 	var g: float = float(ProjectSettings.get_setting("physics/3d/default_gravity", 9.8))
+	var n_dots: int = mini(int(L["preview"]), _dots.size())
+	var step: float = 0.13 * (1.0 if launcher_id == "slingshot" else 1.9)
 	for i in _dots.size():
-		var t: float = 0.13 * float(i + 1)
+		if i >= n_dots:
+			_dots[i].visible = false
+			continue
+		var t: float = step * float(i + 1)
 		var pos: Vector3 = p0 + v * t + Vector3(0, -0.5 * g * (1.0 if classic else 1.8) * t * t, 0)
 		_dots[i].global_position = pos
 		_dots[i].visible = _agl(pos) > 0.1 and aim_power >= MIN_POWER
 
-## Fire with the current aim (also used by tests).
+## Fire with the current aim (also used by tests). Launchers with a wind-up (catapult) start the animation first.
 func fire() -> void:
-	if state != State.AIM:
+	if state != State.AIM or _windup >= 0.0:
 		return
+	_fire_v = -1.0
+	match str(L["mode"]):
+		"topdown":
+			if not bullseye_valid:
+				return
+			var sol: Dictionary = Launchers.solve_lob(LAUNCH_ORIGIN, bullseye + Vector3(0, 1.0, 0), 66.0, Rules.g_eff())
+			if not bool(sol["ok"]):
+				return
+			_fire_dir = sol["dir"]
+			_fire_v = float(sol["speed"])
+			aim_dir = _fire_dir
+			if _rig:
+				(_rig as LauncherRig).set_aim(_fire_dir)
+		"direct", "charge":
+			_fire_dir = _direct_launch_dir()
+			_fire_v = Launchers.direct_speed(L, float(fxp.get("launch_mult", 1.0)))
+			aim_dir = _fire_dir
+	if float(L["windup"]) > 0.0 and not classic:
+		_windup = float(L["windup"])
+		if _rig:
+			(_rig as LauncherRig).fire_anim()
+		lbl_hint.visible = false
+		return
+	_launch_now()
+
+func _launch_now() -> void:
+	_charging = false
+	_charge = 0.0
 	state = State.FLIGHT
 	_skid_dir = Vector3(aim_dir.x, 0.0, aim_dir.z).normalized()
 	t_launch = 0.0
 	flight_t = 0.0
 	for d in _dots:
 		d.visible = false
+	if _marker:
+		_marker.visible = false
+	btn_fire.visible = false
 	bar_bg.visible = false
 	town.set_band(LAUNCH_ORIGIN)
 	var spin := Vector3(randf_range(-6, 6), randf_range(-3, 3), randf_range(-8, 8))
 	if not classic:
 		# the pouch orientation sets the tumble: pulled-back angle -> forward/back flip, plus a corkscrew
 		spin = Vector3(randf_range(-4, 4), randf_range(-5, 5), -aim_dir.y * 9.0 + randf_range(-3, 3))
-	ragdoll.launch(aim_dir * launch_speed(), spin, air_drag_scale(aim_power))
+	var vel: Vector3 = aim_dir * launch_speed()
+	var dscale: float = air_drag_scale(aim_power)
+	_flat_until = -1.0
+	if _fire_v >= 0.0:
+		vel = _fire_dir * _fire_v
+		dscale = 0.0                                    # a gun round / lob does not slow down in the air
+		var mode: String = str(L["mode"])
+		if mode == "direct" or mode == "charge":
+			spin *= 0.35                                # tucked in: a projectile, not a tumbleweed
+			_flat_until = float(L["flat_t"])
+			for b in ragdoll.bodies:                    # hypervelocity: grazing a wall does not sand the round down
+				if b.physics_material_override:
+					b.physics_material_override.friction = 0.02
+	ragdoll.launch(vel, spin, dscale)
+	if _flat_until > 0.0:
+		for b in ragdoll.bodies:
+			b.gravity_scale = 1.8 * float(L["gravity_k"])
+	last_shot = {"launcher": launcher_id, "level": int(L["level"]), "speed": vel.length(), "dir": vel.normalized(), "flat_t": _flat_until}
 	sfx.play("launch", 0.0, randf_range(0.9, 1.1))
+	var fl: float = float(L["flash"])
+	if fl > 0.0:                                        # BOOM: muzzle flash, smoke, shockwave, recoil
+		var muzzle: Vector3 = LAUNCH_ORIGIN + aim_dir * 4.0
+		fx.dust(muzzle, 1.6 * fl)
+		fx.shockwave(muzzle, 5.0 + 4.0 * fl)
+		_burst(muzzle)
+		_flash(muzzle)
+		sfx.play("boom", 2.0 + fl, randf_range(0.7, 0.85))
+	if _rig:
+		(_rig as LauncherRig).fire_anim()
+		(_rig as LauncherRig).set_charge(0.0)
 	trauma = 0.5 if not classic else 0.25
-	cam_event = 0.4
+	if fl > 0.0:
+		trauma = minf(0.6 + 0.25 * fl, 1.0)
+	cam_event = 0.4 + 0.3 * fl
 	lbl_hint.visible = false
 	flip_angle = 0.0
 	settle_timer = 0.0
@@ -930,13 +1405,17 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 		if _tramp_uses > 3:
 			mat = "ground"                      # springs wear out: no infinite bouncing
 	var sev: float = Rules.severity(speed)
-	var eff: float = speed * float(fxp["impact_power"]) * (0.55 if limb else 1.0)
+	var eff: float = Launchers.energy_speed(speed) * float(fxp["impact_power"]) * (0.55 if limb else 1.0)
 	var pass_through: bool = false
 	var keep: float = 0.85
 	var vdir: Vector3 = vin.normalized() if vin.length() > 0.1 else Vector3.RIGHT
 	# ---------------- things that give way
 	if other.has_meta("glass"):
-		if speed > 5.0 and town.break_glass(other as StaticBody3D):
+		if speed > 5.0 and (other.get("collision_layer") == 0 and other.has_meta("glass") and pass_through_glass_ok(speed)):
+			pass_through = true                  # a pane already shattered by another body part this frame
+			keep = 0.95
+			mat = "glass"
+		elif speed > 5.0 and town.break_glass(other as StaticBody3D):
 			fx.debris("glass", pos, vdir, 1.0 + sev)
 			scoring.award("glass_%d" % other.get_instance_id(), "GLASS!", int(30.0 * (1.0 + float(levels.get("destruction", 0)) * 0.2)), "Glass", pos)
 			pass_through = true
@@ -944,7 +1423,7 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 			mat = "glass"
 	elif other.has_meta("kind") and other is RigidBody3D and (other as RigidBody3D).freeze:
 		var piece := other as RigidBody3D
-		var pr: Dictionary = Destruction.punch(town, piece, pos, vdir, eff * float(fxp["destruct_mult"]), town.smash_push)
+		var pr: Dictionary = Destruction.punch(town, piece, pos, vdir, eff * float(fxp["destruct_mult"]) * float(L["impact"]), town.smash_push)
 		var released: Array = (pr["released"] as Array) + (pr["dissolved"] as Array)
 		if released.size() > 0:
 			var dmg: int = 0
@@ -978,7 +1457,7 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 			pass_through = true
 			keep = maxf(float(pr["keep"]), 0.3)
 			mat = m0
-			_slow_event = maxf(_slow_event, Rules.slowmo_weight(released.size(), eff * float(fxp["destruct_mult"])))
+			_slow_event = maxf(_slow_event, Rules.slowmo_weight(released.size(), eff * float(fxp["destruct_mult"]) * float(L["impact"])))
 			cam_event = maxf(cam_event, clampf(float(released.size()) / 16.0, 0.3, 1.0))
 	elif other.has_meta("decor"):
 		if speed > 5.0 and town.break_decor(other as StaticBody3D, vdir, speed):
@@ -990,12 +1469,36 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 			mat = "wood"
 			if town.decor_smashed % 10 == 0:
 				scoring.award("demo_%d" % town.decor_smashed, "DEMOLITION x%d" % town.decor_smashed, town.decor_smashed * 10, "Impacts", pos)
+	elif other is StaticBody3D and not other.has_meta("ground") and not other.has_meta("boundary") and not other.has_meta("glass") and not other.has_meta("decor") \
+			and ["canvas", "wood", "metal"].has(str(other.get_meta("mat", ""))) and eff * float(fxp["destruct_mult"]) * float(L["impact"]) >= (28.0 if str(other.get_meta("mat", "")) != "metal" else 55.0):
+		# awnings, signs, poles, fences: light fixtures that are static for the physics but give way to a hard enough hit
+		if town.smash_static(other as StaticBody3D, vdir, speed):
+			scoring.add_smash(other.get_instance_id(), int(14.0 * Rules.destruct_score_mult(float(fxp["destruct_mult"]))), pos)
+			fx.debris(str(other.get_meta("mat", "wood")), pos, vdir, 0.8 + sev)
+		pass_through = true                      # the other body parts touching the same fixture in this frame pass too
+		keep = 0.95
+		mat = str(other.get_meta("mat", "wood"))
+	elif other is RigidBody3D and other.has_meta("frozen_piece") and not (other as RigidBody3D).freeze \
+			and eff * float(fxp["destruct_mult"]) * float(L["impact"]) >= 30.0 + 2.5 * (other as RigidBody3D).mass:
+		# a chunk that is already loose (flung by this very impact): a hard enough hit just shoves it out of the way
+		var chunk := other as RigidBody3D
+		chunk.apply_central_impulse(vdir * minf(eff * float(fxp["destruct_mult"]) * float(L["impact"]), 220.0) * 0.5 * chunk.mass)
+		pass_through = true
+		keep = 0.97
+		mat = str(chunk.get_meta("mat", "masonry"))
 	elif other.has_meta("prop"):
 		if other.has_meta("explosive") and speed > 5.0:
 			_blast(other as RigidBody3D)
 		elif speed > 6.0:
 			var pm: float = (other as RigidBody3D).mass if other is RigidBody3D else 1.0
 			scoring.award("hit_%d" % other.get_instance_id(), "WHAM!", int((10.0 + pm * 4.0) * clampf(eff / 14.0, 0.6, 2.5)), "Impacts", pos)
+			# a hard enough hit just plows through a light prop (taxi, bench, barrel): the prop is flung, Ragnar keeps going
+			var plow: float = eff * float(fxp["destruct_mult"]) * float(L["impact"])
+			if plow >= 30.0 + 2.5 * pm and other is RigidBody3D:
+				(other as RigidBody3D).sleeping = false
+				(other as RigidBody3D).apply_central_impulse(vdir * minf(plow, 200.0) * 0.6 * pm)
+				pass_through = true
+				keep = clampf(1.0 - pm / maxf(plow * 1.5, 1.0), 0.8, 0.97)
 	if other.has_meta("bonus") and not other.has_meta("kind") and speed > 6.0:
 		var bb: Dictionary = other.get_meta("bonus")
 		scoring.award(str(bb["key"]), str(bb["name"]), int(bb["pts"]), "Targets", pos)
@@ -1004,6 +1507,19 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 		var ra: Dictionary = town.ring_award(pos)
 		if not ra.is_empty():
 			scoring.award(str(ra["key"]), str(ra["name"]), int(ra["pts"]), "Targets", pos)
+	var big_hit: bool = eff * float(fxp["destruct_mult"]) * float(L["impact"]) >= 150.0
+	# ---------------- overwhelming energy (maxed character + a big launcher): nothing that is not terrain or the world edge stops the run
+	if not pass_through and not other.has_meta("ground") and not other.has_meta("boundary") and not other.has_meta("terrain") \
+			and not (other is StaticBody3D and ["trampoline", "water"].has(str(other.get_meta("mat", "")))) \
+			and not (other is RigidBody3D and (other as RigidBody3D).freeze) \
+			and eff * float(fxp["destruct_mult"]) * float(L["impact"]) >= 150.0:
+		if other is RigidBody3D:
+			(other as RigidBody3D).sleeping = false
+			(other as RigidBody3D).apply_central_impulse(vdir * 120.0 * (other as RigidBody3D).mass)
+		pass_through = true
+		keep = 0.96
+	if pass_through and big_hit:
+		keep = maxf(keep, 0.985)
 	# ---------------- pass through (momentum mostly kept) or SKIP / RICOCHET (pebble model)
 	if pass_through:
 		for bd in ragdoll.bodies:
@@ -1011,7 +1527,11 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 				continue
 			if not limb and ragdoll.is_detached(bd):
 				continue
-			bd.linear_velocity = bd.linear_velocity.lerp(vin * keep, 0.8)
+			if big_hit and not limb:
+				# overwhelming energy: the whole body keeps the torso's pre-impact velocity (contact solving cannot rob it piece by piece)
+				bd.linear_velocity = bd.linear_velocity.lerp(ragdoll.prev_velocity(ragdoll.torso) * keep, 1.0 if bd == part else 0.95)
+			else:
+				bd.linear_velocity = bd.linear_velocity.lerp(vin * keep, 0.8)
 	else:
 		var face: String = ragdoll.torso_face(n) if part == ragdoll.torso else ""
 		var mods: Dictionary = Rules.part_modifiers(pname, face)
@@ -1193,6 +1713,9 @@ func _on_burned(node: Node3D, pos: Vector3) -> void:
 	if node.has_meta("explosive") and node is RigidBody3D:
 		_blast(node as RigidBody3D)
 
+func pass_through_glass_ok(speed: float) -> bool:
+	return speed > 5.0
+
 func _blast(b: RigidBody3D) -> void:
 	var res: Dictionary = town.detonate(b)
 	_apply_blast_result(res, "tnt_%d" % b.get_instance_id(), b.global_position, float(b.get_meta("blast_r", 9.0)), 0)
@@ -1237,7 +1760,8 @@ func _apply_blast_result(res: Dictionary, key: String, origin: Vector3, radius: 
 				var dist: float = dv.length()
 				var reach: float = maxf(radius * 1.05, 9.0)
 				if dist < reach:
-					bd.apply_central_impulse((dv.normalized() + Vector3(0, 0.5, 0)).normalized() * (20.0 + 0.9 * radius) * (1.0 - dist / reach) * bd.mass)
+					var fast: float = clampf(1.0 - ragdoll.torso.linear_velocity.length() / 160.0, 0.2, 1.0)   # a round doing 200 m/s shrugs a blast off
+					bd.apply_central_impulse((dv.normalized() + Vector3(0, 0.5, 0)).normalized() * (20.0 + 0.9 * radius) * (1.0 - dist / reach) * bd.mass * fast)
 	else:
 		for c in blasts:
 			for bd in ragdoll.bodies:
@@ -1398,8 +1922,17 @@ func _update_hud() -> void:
 
 # ---------------------------------------------------------------- loop
 func _physics_process(dt: float) -> void:
+	if state == State.AIM:
+		_tick_aim(dt)
 	if state != State.FLIGHT:
 		return
+	if _flat_until >= 0.0 and is_instance_valid(ragdoll):
+		var k: float = clampf((flight_t - _flat_until) / 0.6, 0.0, 1.0)
+		if flight_t >= _flat_until:                      # direct-fire round: gravity fades back in after the straight run
+			for b in ragdoll.bodies:
+				b.gravity_scale = lerpf(1.8 * float(L["gravity_k"]), 1.8, k)
+			if k >= 1.0:
+				_flat_until = -1.0
 	flight_t += dt
 	scoring.clock = flight_t
 	_run_pending_blasts()
@@ -1557,7 +2090,19 @@ func _update_camera(dt: float) -> void:
 		cam_event = maxf(cam_event - dt * 0.7, 0.0)
 		var dist: float = lerpf(9.0 + clampf(speed * 0.22, 0.0, 6.0), 17.0, cam_blend) + cam_event * 6.0
 		var height: float = lerpf(3.4, 7.5, cam_blend) + clampf(c.y * 0.25, 0.0, 6.0) + cam_event * 2.5
-		cam.fov = lerpf(cam.fov, 56.0 + clampf(speed - 14.0, 0.0, 40.0) * 0.3 + cam_event * 7.0, 1.0 - exp(-4.0 * dt))
+		var fov_extra := 0.0
+		match str(L["cam"]):
+			"chase_high":                                  # catapult: pull back and up, the arc is the show
+				dist += 7.0 + clampf(c.y * 0.15, 0.0, 14.0)
+				height += 6.0 + clampf(c.y * 0.2, 0.0, 12.0)
+			"chase_low":                                   # direct fire: low and close behind the round, speed lines via fov
+				dist += 1.5
+				height *= 0.7
+				fov_extra = clampf(speed - 40.0, 0.0, 80.0) * 0.12
+			"topdown":
+				dist += 4.0
+				height += 4.0
+		cam.fov = lerpf(cam.fov, 56.0 + clampf(speed - 14.0, 0.0, 40.0) * 0.3 + cam_event * 7.0 + fov_extra, 1.0 - exp(-4.0 * dt))
 		var side := Vector3(-_trav_dir.z, 0.0, _trav_dir.x) * (4.5 if not view_right else -4.5)
 		var pos: Vector3 = c - _trav_dir * dist + side + Vector3(0, height, 0)
 		pos.x = clampf(pos.x, Town.WORLD_X_MIN + 2.0, Town.WORLD_X_MAX - 2.0)
@@ -1625,6 +2170,12 @@ func _load_best() -> void:
 			levels = Rules.empty_levels()
 			economy_reset_note = true
 			_save_progress()
+		for lid in Launchers.ids():
+			launcher_levels[lid] = clampi(int(cf.get_value("launchers", "lv_" + lid, int(launcher_levels.get(lid, 0)))), 0, Launchers.MAX_LEVEL)
+		launcher_levels["slingshot"] = maxi(int(launcher_levels["slingshot"]), 1)
+		var sel: String = str(cf.get_value("launchers", "selected", "slingshot"))
+		launcher_id = sel if int(launcher_levels.get(sel, 0)) > 0 else "slingshot"
+		L = Launchers.stats(launcher_id, int(launcher_levels[launcher_id]))
 		char_idx = int(cf.get_value("choice", "char", 0))
 		env_idx = Rules.env_index(str(cf.get_value("choice", "env_id", "hill_steep")))
 		gore = bool(cf.get_value("settings", "gore", true))
@@ -1636,6 +2187,9 @@ func _save_progress() -> void:
 	cf.set_value("progress", "schema", ECONOMY_SCHEMA)
 	for key in Rules.UPGRADE_ORDER:
 		cf.set_value("progress", "up_" + key, get_level(key))
+	for lid in launcher_levels.keys():
+		cf.set_value("launchers", "lv_" + str(lid), int(launcher_levels[lid]))
+	cf.set_value("launchers", "selected", launcher_id)
 	cf.save("user://launch.cfg")
 
 func _save_choice() -> void:

@@ -17,7 +17,7 @@ extends RefCounted
 const Rules := preload("res://scripts/rules.gd")
 
 const MAX_RELEASE_PER_IMPACT := 56      # rigid bodies one impact may free; the rest of the broken set dissolves into debris
-const MAX_EXPAND_PER_BLAST := 6         # shells built per blast (a build costs ~2.4 ms desktop; phones ~3x)
+const MAX_EXPAND_PER_BLAST := 10        # shells built per blast (a build costs ~2.4 ms desktop; phones ~3x)
 const MAX_EXPANDED_SHELLS := 40         # expanded buildings per run (each keeps its cells alive until reset)
 const MAX_PATH := 70.0
 
