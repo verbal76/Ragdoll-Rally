@@ -2132,7 +2132,8 @@ func _update_camera(dt: float) -> void:
 			var cur_d: float = cam.global_position.distance_to(focus)
 			var tgt_d: float = safe.distance_to(focus)
 			var rate: float = follow
-			if tgt_d < cur_d - 0.01 or CamSafe.inside_solid(get_viewport().world_3d.direct_space_state, cam.global_position):
+			var space_s: PhysicsDirectSpaceState3D = get_viewport().world_3d.direct_space_state
+			if tgt_d < cur_d - 0.01 or CamSafe.inside_solid(space_s, cam.global_position) or CamSafe.clear_fraction(space_s, cam.global_position, focus, 0.15) < 0.97:
 				rate = 16.0                                  # something is in the way: come in at once
 			elif flight_t - _cam_block_t < 0.4:
 				rate = 1.5                                   # just cleared: do not pop back out
