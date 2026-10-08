@@ -52,7 +52,7 @@ func _reachable(p: Vector3) -> bool:
 		if den <= 0.0:
 			continue
 		var v: float = sqrt(g * dist * dist / den)
-		if v > 68.0 or v < 8.0:
+		if v > 150.0 or v < 8.0:
 			continue
 		if Rules.ideal_range(v, th) <= Rules.RANGE_CAP_BASE + Rules.MAYHEM_MAX * Rules.RANGE_CAP_PER_LEVEL + 0.5 and Rules.ideal_apex(v, th) <= Rules.APEX_CAP_BASE + Rules.MAYHEM_MAX * Rules.APEX_CAP_PER_LEVEL + 0.5:
 			return true

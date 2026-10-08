@@ -13,6 +13,7 @@ const Outskirts := preload("res://scripts/outskirts.gd")
 signal piece_released(piece: RigidBody3D)
 signal ignited(node: Node3D, pos: Vector3)
 signal burned(node: Node3D, pos: Vector3)
+signal hazard_blast(res: Dictionary, h: Dictionary)
 
 const KIT := "res://assets/kenney/retro-fantasy-kit/%s.glb"
 const S := 1.5          # kit unit -> metres
@@ -784,7 +785,85 @@ func _tree(s: Vector3) -> void:
 	register_combustible(t)
 
 # ------------------------------------------------------ bounded active physics
+
+# ------------------------------------------------------------- explosive hazards (built by hazards.gd)
+var hazards: Array[Dictionary] = []
+var _hazard_q: Array = []                    # [{h, t}] detonations waiting for their delay (chains are staggered)
+var _hz_clock: float = 0.0
+var hazards_fired: int = 0
+var _hz_acc: float = 0.0
+
+func add_hazard(h: Dictionary) -> void:
+	hazards.append(h)
+	var idx: int = hazards.size() - 1
+	for s in (h["shells"] as Array):
+		(s as Node).set_meta("hazard", idx)
+	var main_shell: RigidBody3D = (h["shells"] as Array)[0]
+	register_combustible(main_shell)                      # fire can walk up to it; burning long enough sets it off
+	_bonus(main_shell, "hz_%s" % str(h["key"]), str(h["label"]), int(h["pts"]))
+
+## Queue a detonation (idempotent). `delay` staggers chain reactions so each blast reads on its own.
+func trigger_hazard(h: Dictionary, delay: float = 0.0) -> void:
+	if not bool(h["armed"]) or hazards_fired + _hazard_q.size() >= 12:
+		return
+	h["armed"] = false
+	_hazard_q.append({"h": h, "t": _hz_clock + delay})
+
+## A shell of a hazard structure took damage: `frac` of its cells are gone.
+func hazard_hit(shell: Node, frac: float) -> void:
+	if shell.has_meta("hazard") and frac >= 0.2:
+		trigger_hazard(hazards[int(shell.get_meta("hazard"))], 0.05)
+
+func _process_hazards(dt: float) -> void:
+	_hz_clock += dt
+	if hazards.is_empty():
+		return
+	var keep: Array = []
+	for e in _hazard_q:
+		if _hz_clock >= float(e["t"]):
+			_detonate_hazard(e["h"])
+		else:
+			keep.append(e)
+	_hazard_q = keep
+	# a hard-flying chunk striking a hazard structure sets it off
+	_hz_acc += dt
+	if _hz_acc >= 0.2:
+		_hz_acc = 0.0
+		for h in hazards:
+			if not bool(h["armed"]):
+				continue
+			for p in released_order:
+				if is_instance_valid(p) and not p.freeze and p.linear_velocity.length() > 20.0 and not (h["shells"] as Array).has(p.get_meta("shell_of", null)):
+					if p.global_position.distance_to(h["pos"]) < float(h["size"]):
+						trigger_hazard(h, 0.0)
+						break
+
+func _detonate_hazard(h: Dictionary) -> void:
+	hazards_fired += 1
+	var c: Vector3 = h["pos"]
+	var res: Dictionary = explode(c, float(h["radius"]), float(h["power"]))
+	for s in (h["shells"] as Array):                        # the structure itself comes apart outward
+		if not is_instance_valid(s):
+			continue
+		var cells: Array = Destruction.expand(self, s) if Destruction.is_shell(s) else (s.get_meta("shell_cells", []) as Array)
+		for cb in cells:
+			var cell := cb as RigidBody3D
+			if cell.freeze and not cell.get_meta("capped", false):
+				release(cell, ((cell.global_position - c).normalized() + Vector3(0, 0.6, 0)) * float(h["power"]) * randf_range(0.5, 1.0))
+				(res["released"] as Array).append(cell)
+	ignite_near(c, float(h["radius"]) * 1.1, 0.95)
+	hazard_blast.emit(res, h)
+
+## Burning embers: some of the pieces a blast throws are on fire (any material). They keep their flame while they fly and
+## ignite anything flammable they land against - the fire spreads by the debris, not only by the explosion.
+func make_ember(p: RigidBody3D) -> void:
+	var id: int = p.get_instance_id()
+	if not _fire_idx.has(id):
+		register_combustible(p)
+	_ignite_idx(int(_fire_idx[id]))
+
 func _physics_process(dt: float) -> void:
+	_process_hazards(dt)
 	_fire_acc += dt
 	if _fire_acc >= 0.25:
 		if burning_count > 0:
@@ -868,6 +947,10 @@ func reset_in_place() -> void:
 		b.sleeping = true
 	released_order.clear()
 	_live_cnt = 0
+	for hz in hazards:
+		hz["armed"] = true
+	_hazard_q.clear()
+	hazards_fired = 0
 	_restore_decor()
 	_restore_glass()
 	fire_reset()
@@ -1211,6 +1294,11 @@ func explode(center: Vector3, radius: float, power: float) -> Dictionary:
 				Destruction.expand(self, sh)
 				opened += 1
 		var rel_n := 0
+		for hz in hazards:                                  # other hazard structures in the blast go off a moment later (bounded chain)
+			if bool(hz["armed"]):
+				var hd: float = (hz["pos"] as Vector3).distance_to(c)
+				if hd <= radius + float(hz["size"]):
+					trigger_hazard(hz, 0.15 + 0.5 * hd / maxf(radius, 1.0))
 		for p in pieces.duplicate():
 			if p.get_meta("capped", false):
 				continue
@@ -1247,6 +1335,11 @@ func explode(center: Vector3, radius: float, power: float) -> Dictionary:
 				b.freeze = true
 				queue.append(b.global_position)
 	released.append_array(Destruction.collapse(self, released))
+	if power >= 24.0 and not released.is_empty():           # a few of the pieces thrown are burning
+		for k in mini(released.size(), 1 + int(radius / 9.0)):
+			var cand: RigidBody3D = released[randi() % released.size()]
+			if is_instance_valid(cand) and not cand.freeze:
+				make_ember(cand)
 	for c in blasts:
 		ignite_near(c, radius * 0.9, 0.75)
 	return {"released": released, "blasts": blasts, "power": power, "radius": radius}
@@ -1324,6 +1417,11 @@ func ignite_near(pos: Vector3, r: float, p: float = 1.0) -> int:
 	return cnt
 
 func _fire_tick(dt: float) -> void:
+	for i in fire_state.size():                    # burning chunks in flight carry their fire with them
+		if fire_state[i] == 1:
+			var bn: Node3D = fire_nodes[i]
+			if is_instance_valid(bn) and bn is RigidBody3D and not (bn as RigidBody3D).freeze:
+				fire_pos[i] = bn.global_position
 	var res: Dictionary = Rules.fire_step(fire_pos, fire_state, fire_timer, dt, fire_spread_mult, [], _fire_grid, 4.0)
 	for i in (res["ignite"] as Array):
 		var n: Node3D = fire_nodes[i]
@@ -1350,6 +1448,8 @@ func _burn_out(i: int) -> void:
 	var pos: Vector3 = n.global_position + Vector3(0, 1.0, 0)
 	if fx:
 		fx.smoke_at(pos)
+	if n.has_meta("hazard"):                    # burned long enough: a gas / fuel structure goes up
+		trigger_hazard(hazards[int(n.get_meta("hazard"))], 0.0)
 	if n.has_meta("kind"):                      # a burnt timber piece gives way and collapses
 		var p := n as RigidBody3D
 		if p.freeze:

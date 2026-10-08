@@ -801,6 +801,7 @@ func reset() -> void:
 		add_child(town)
 		town.build(legacy_world, env_id)
 		town.piece_released.connect(_on_piece_released)
+		town.hazard_blast.connect(_on_hazard_blast)
 		town.ignited.connect(_on_ignited)
 		town.burned.connect(_on_burned)
 	town.fx = fx
@@ -1446,6 +1447,7 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 			sfx.play(str((Rules.MATERIALS.get(m0, Rules.MATERIALS["masonry"]) as Dictionary)["sound"]), 0.0, randf_range(0.8, 1.1))
 			for shk in shells_hit.keys():
 				var tot: int = int((shk as RigidBody3D).get_meta("shell_n", 1))
+				town.hazard_hit(shk, float(shells_hit[shk]) / float(maxi(tot, 1)))
 				if float(shells_hit[shk]) >= 0.6 * float(tot) and tot >= 4:
 					scoring.award("demo_%d" % (shk as Object).get_instance_id(), "BUILDING DOWN!", Rules.demolish_points(tot), "Destruction", pos)
 			if int(pr["n"]) >= 4 and not bool(pr["blocked"]):
@@ -1715,6 +1717,15 @@ func _on_burned(node: Node3D, pos: Vector3) -> void:
 
 func pass_through_glass_ok(speed: float) -> bool:
 	return speed > 5.0
+
+## A gas / fuel structure went off (hit hard, burned, struck by debris, or caught in another blast).
+func _on_hazard_blast(res: Dictionary, h: Dictionary) -> void:
+	if state != State.FLIGHT and state != State.RESULT:
+		return
+	var radius: float = float(h["radius"])
+	_apply_blast_result(res, "haz_%s" % str(h["key"]), h["pos"], radius, clampi(int((radius - 5.0) / 0.9), 1, 20), false)
+	scoring.award("hzboom_%s" % str(h["key"]), "%s EXPLODES!" % str(h["label"]), 600 + int(radius * 20.0), "Explosions", h["pos"])
+	_last_event = flight_t
 
 func _blast(b: RigidBody3D) -> void:
 	var res: Dictionary = town.detonate(b)

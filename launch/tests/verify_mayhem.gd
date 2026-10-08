@@ -28,6 +28,7 @@ func _run() -> void:
 	await _camera()
 	await _shells()
 	await _structure()
+	await _hazards()
 	await _blood()
 	await _effects()
 	print("---- MAYHEM %s (%d failures)" % ["OK" if fails == 0 else "FAILED", fails])
@@ -386,4 +387,63 @@ func _structure() -> void:
 		if p.has_meta("shell_of"):
 			open_cells += 1
 	check(T == town_before and T.shells_open.is_empty() and all_back and open_cells == 0, "fast reset: same world, every shell closed, every dissolved or released piece restored")
+	main.force_rebuild = true
+
+func _hazards() -> void:
+	main.force_rebuild = false
+	var seen := 0
+	for id in ["downtown", "industrial", "hill_steep"]:
+		main.start_game(0, Rules.env_index(id))
+		for i in 4:
+			await process_frame
+		var T = main.town
+		if T.hazards.size() > 0:
+			seen += 1
+		check(T.hazards.size() >= (1 if id.begins_with("hill_") else 2), "%s: explosive hazard structures exist and are marked (%d)" % [id, T.hazards.size()])
+	var T = main.town
+	main.start_game(0, Rules.env_index("downtown"))
+	for i in 4:
+		await process_frame
+	T = main.town
+	var h0: Dictionary = T.hazards[0]
+	var h1: Dictionary = T.hazards[1]
+	# 1. a blast next to a hazard sets it off (chain), with a delay, bounded
+	var res: Dictionary = T.explode((h0["pos"] as Vector3) + Vector3(4, 0, 0), 20.0, 30.0)
+	check(not bool(h0["armed"]), "a blast beside a gas structure sets it off")
+	for i in 90:
+		await physics_frame
+	check(T.hazards_fired >= 1 and (h0["shells"][0] as RigidBody3D).get_meta("shell_open", false), "the structure detonated and came apart (%d fired)" % T.hazards_fired)
+	# 2. fire: a burning hazard goes up after its burn time
+	main.reset()
+	for i in 3:
+		await process_frame
+	T = main.town
+	h1 = T.hazards[1]
+	T.ignite_node((h1["shells"] as Array)[0])
+	var t_boom := -1.0
+	var tt := 0.0
+	while tt < 9.0 and bool(h1["armed"]):
+		await physics_frame
+		tt += 1.0 / 60.0
+	check(not bool(h1["armed"]), "a hazard that burns long enough detonates (after %.1f s)" % tt)
+	# 3. embers: a blast throws burning pieces that keep burning in flight
+	main.reset()
+	for i in 3:
+		await process_frame
+	T = main.town
+	var p: Vector3 = (T.hazards[0]["pos"] as Vector3)
+	T.explode(p + Vector3(0, 2, 0), 24.0, 36.0)
+	for i in 10:
+		await physics_frame
+	check(T.burning_count > 0, "a blast leaves burning debris (%d burning)" % T.burning_count)
+	# 4. bounded: a chain never exceeds the cap
+	main.reset()
+	for i in 3:
+		await process_frame
+	T = main.town
+	for hz in T.hazards:
+		T.trigger_hazard(hz, 0.0)
+	for i in 120:
+		await physics_frame
+	check(T.hazards_fired <= 12, "the chain is bounded (%d detonations)" % T.hazards_fired)
 	main.force_rebuild = true

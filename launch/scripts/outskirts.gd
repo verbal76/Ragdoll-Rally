@@ -8,6 +8,7 @@ extends RefCounted
 const Rules := preload("res://scripts/rules.gd")
 const Hillside := preload("res://scripts/hillside.gd")
 const Destruction := preload("res://scripts/destruction.gd")
+const Hazards := preload("res://scripts/hazards.gd")
 
 const X_END := 318.0
 const FLOOR_H := 3.1
@@ -66,6 +67,14 @@ static func build(t, env_id: String) -> Dictionary:
 	var tallest := 0.0
 	var landmarks: Array = []
 	var cands: Array = []
+	# explosive hazard structures: reserved lots (a gas company, a fuel depot, a tank farm) spread through the district
+	var hz_cells := {}
+	var hz_kinds: Array = ["gas", "fuel", "tanks"]
+	var hz_x: Array = [x0 + 0.24 * (X_END - x0), x0 + 0.5 * (X_END - x0), x0 + 0.78 * (X_END - x0)]
+	for hi in 3:
+		var hix: int = int(round((hz_x[hi] - x0) / pitch))
+		var hiz: int = int(round(((-70.0 if hi % 2 == 0 else 62.0) + 108.0) / pitch))
+		hz_cells[Vector2i(hix, hiz)] = hz_kinds[hi]
 	var ix := 0
 	var x: float = x0
 	while x < X_END - pitch * 0.5:
@@ -73,7 +82,13 @@ static func build(t, env_id: String) -> Dictionary:
 		var z: float = -108.0
 		while z <= 108.0:
 			var hv: float = _hf(ix, iz, seed)
-			if absf(z) > LANE and hv < float(st["dens"]):
+			if hz_cells.has(Vector2i(ix, iz)):
+				var hxp: float = x
+				var hzp: float = z
+				var gh: float = t.ground_y(hxp, hzp)
+				if height_cap(sqrt(hxp * hxp + hzp * hzp)) - gh > 10.0 and absf(t.ground_y(hxp + 8.0, hzp + 8.0) - t.ground_y(hxp - 8.0, hzp - 8.0)) < 6.0:
+					Hazards.build(t, str(hz_cells[Vector2i(ix, iz)]), Vector3(hxp, gh - 0.2, hzp), "hz_%s_%d" % [env_id, ix])
+			elif absf(z) > LANE and hv < float(st["dens"]):
 				var jx: float = (_hf(ix, iz, seed + 1) - 0.5) * pitch * 0.25
 				var jz: float = (_hf(ix, iz, seed + 2) - 0.5) * pitch * 0.25
 				var px: float = x + jx
@@ -88,7 +103,7 @@ static func build(t, env_id: String) -> Dictionary:
 					iz += 1
 					z += pitch
 					continue                                    # too steep for a building pad
-				var cap: float = height_cap(px) - gl - 2.7           # less the roof
+				var cap: float = height_cap(sqrt(px * px + pz * pz)) - gl - 2.7           # less the roof
 				if cap < 2.0 * FLOOR_H:
 					iz += 1
 					z += pitch
