@@ -560,8 +560,9 @@ func _refresh_upgrades() -> void:
 		var lv: int = get_level(key)
 		var cost: int = upgrade_cost(key)
 		var u: Dictionary = Rules.UPGRADES[key]
-		(_up_rows[key]["label"] as Label).text = "%s  Lv %d/%d
-%s" % [str(u["name"]), lv, int(u["max"]), str(u["desc"])]
+		var band: String = ("  [%s]" % Rules.mayhem_band(lv)) if Rules.MAYHEM_KEYS.has(key) and lv > 0 else ""
+		(_up_rows[key]["label"] as Label).text = "%s  Lv %d/%d%s
+%s" % [str(u["name"]), lv, int(u["max"]), band, str(u["desc"])]
 		var bt := _up_rows[key]["btn"] as Button
 		bt.text = "MAX" if cost < 0 else "BUY %d" % cost
 		bt.disabled = cost < 0 or bank < cost

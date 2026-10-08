@@ -5,6 +5,7 @@ extends SceneTree
 const Rules := preload("res://scripts/rules.gd")
 const Destruction := preload("res://scripts/destruction.gd")
 const CamSafe := preload("res://scripts/cam_safe.gd")
+const DestructionProfile := preload("res://scripts/destruction_profile.gd")
 var fails := 0
 var main: Node
 
@@ -26,6 +27,7 @@ func _run() -> void:
 	_pure()
 	await _camera()
 	await _shells()
+	await _structure()
 	await _blood()
 	await _effects()
 	print("---- MAYHEM %s (%d failures)" % ["OK" if fails == 0 else "FAILED", fails])
@@ -59,6 +61,8 @@ func _pure() -> void:
 	check(int(mid["n"]) > int(weak["n"]), "more energy breaks more pieces (%d -> %d)" % [weak["n"], mid["n"]])
 	check(not bool(big["blocked"]) and int(big["n"]) == 6 and float(big["keep"]) > 0.9, "overwhelming energy exits the far side keeping %.0f%% momentum" % (100.0 * float(big["keep"])))
 	check(float(weak["keep"]) < float(big["keep"]), "momentum kept rises with energy")
+	var tap: Dictionary = Rules.punch_walk(Rules.punch_budget(7.0), [Rules.piece_cost(6.5), Rules.piece_cost(6.5)], true)
+	check(int(tap["n"]) == 1 and bool(tap["blocked"]), "a hit just above a piece's toughness breaks that piece and nothing behind it")
 	# typical throws vs the level: speed 28 m/s
 	var dens: Array[int] = []
 	for l in [0, 5, 10, 15, 20]:
@@ -309,3 +313,77 @@ func _effects() -> void:
 		st = Rules.slowmo_step(st, now, 0.016, 1.0)
 		now += 0.016
 	check(float(st["spent"]) <= Rules.SLOWMO_RUN_BUDGET + 1.5 and float(st["scale"]) == 1.0, "even constant events end in normal time once the budget is spent")
+
+func _structure() -> void:
+	main.force_rebuild = false
+	main.start_game(0, Rules.env_index("downtown"))
+	for i in 4:
+		await process_frame
+	var T = main.town
+	# stacked storeys: remove the support of the upper segment and it falls
+	var lower: RigidBody3D = null
+	for p in T.pieces:
+		if Destruction.is_shell(p) and p.has_meta("above") and is_instance_valid(p.get_meta("above")):
+			lower = p
+			break
+	check(lower != null, "tall buildings are stacks of linked storeys")
+	if lower != null:
+		var upper: RigidBody3D = lower.get_meta("above")
+		var cells: Array = Destruction.expand(T, lower)
+		var top_f := -1
+		for c in cells:
+			top_f = maxi(top_f, (c.get_meta("cidx") as Vector3i).y)
+		var rel: Array = []
+		for c in cells:
+			if (c.get_meta("cidx") as Vector3i).y == top_f and c.get_meta("kind") != "roof":
+				T.release(c, Vector3.ZERO)
+				rel.append(c)
+		var fell: Array = Destruction.collapse(T, rel)
+		check(fell.size() >= 2 and not T.pieces.has(upper), "removing a storey's support drops the storeys above it (%d pieces fell)" % fell.size())
+	# a designer profile overrides the material default
+	var shell2: RigidBody3D = null
+	for p in T.pieces:
+		if Destruction.is_shell(p) and not p.has_meta("above") and not p.has_meta("below"):
+			shell2 = p
+			break
+	if shell2 != null:
+		var prof := DestructionProfile.new()
+		prof.cell_tough = 0.25
+		shell2.set_meta("profile", prof)
+		var tough: float = float(shell2.get_meta("tough"))
+		var cs: Array = Destruction.expand(T, shell2)
+		check(absf(float((cs[0] as RigidBody3D).get_meta("tough")) - tough * 0.25) < 0.01, "a DestructionProfile resource overrides the material defaults")
+	# simulation budget: past ACTIVE_HARD pieces dissolve to debris instead of becoming bodies
+	var frozen: Array = []
+	for p in T.pieces:
+		if p.freeze and not p.get_meta("capped", false):
+			frozen.append(p)
+	var before_live: int = T.active_released()
+	var n_rel := 0
+	for p in frozen:
+		if n_rel >= T.ACTIVE_HARD + 40:
+			break
+		T.release(p, Vector3.ZERO)
+		n_rel += 1
+	var live: int = T.active_released()
+	check(live <= T.ACTIVE_HARD + 2, "releasing %d pieces never simulates more than the budget (%d live, budget %d)" % [n_rel, live, T.ACTIVE_HARD])
+	var dis := 0
+	for p in T.pieces:
+		if p.get_meta("dissolved", false):
+			dis += 1
+	check(dis >= 30, "the overflow dissolved into debris instead (%d pieces)" % dis)
+	# fast reset (no rebuild) restores everything: shells, dissolved pieces, positions
+	var town_before = T
+	main.reset()
+	for i in 3:
+		await process_frame
+	T = main.town
+	var all_back := true
+	var open_cells := 0
+	for p in T.pieces:
+		if not p.freeze or p.collision_layer != 4 or not p.visible:
+			all_back = false
+		if p.has_meta("shell_of"):
+			open_cells += 1
+	check(T == town_before and T.shells_open.is_empty() and all_back and open_cells == 0, "fast reset: same world, every shell closed, every dissolved or released piece restored")
+	main.force_rebuild = true

@@ -309,13 +309,15 @@ static func punch_budget(effk: float) -> float:
 
 ## costs: piece costs ordered along the path. Returns {"n": pieces broken, "left": remaining budget fraction 0..1,
 ## "blocked": bool (ran out before the path ended), "keep": momentum fraction the ragdoll keeps}.
-static func punch_walk(budget: float, costs: Array) -> Dictionary:
+static func punch_walk(budget: float, costs: Array, force_first: bool = false) -> Dictionary:
 	var start: float = maxf(budget, 0.001)
 	var left: float = start
 	var n: int = 0
 	var blocked: bool = false
 	for c in costs:
 		var cost: float = float(c)
+		if n == 0 and force_first:
+			cost = minf(cost, left * 0.6)               # the piece that was hit hard enough to break always gives way
 		if left < cost * 0.5:
 			blocked = true
 			break

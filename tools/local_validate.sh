@@ -6,7 +6,7 @@ set -u
 G="${GODOT:-godot}"; MODE="${1:-full}"; cd "$(dirname "$0")/.."
 $G --headless --path launch --import >/dev/null 2>&1 || true
 TESTS="verify_v13 verify_mayhem verify_envelope verify_hills verify_splash verify_ota"
-[ "$MODE" = "full" ] && TESTS="$TESTS verify verify_pivot verify_expanded verify_cities"
+[ "$MODE" = "full" ] && TESTS="$TESTS verify verify_pivot verify_expanded verify_cities verify_stress"
 rc=0
 for t in $TESTS; do
   out=$(timeout 1200 $G --headless --path launch -s tests/$t.gd 2>&1); code=$?

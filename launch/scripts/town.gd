@@ -498,6 +498,22 @@ func dissolve(p: RigidBody3D, vel: Vector3) -> void:
 		fire_retire(p)
 	piece_released.emit(p)
 
+## Facade windows are world-triplanar so a standing building reads as one wall; once a chunk moves the texture would slide over it,
+## so a released chunk gets its own object-space copy, aligned to where it stood (the pattern leaves the building intact).
+func _own_texture(p: RigidBody3D) -> void:
+	if p.has_meta("own_tex"):
+		return
+	p.set_meta("own_tex", true)
+	for ch in p.get_children():
+		if ch is MeshInstance3D:
+			var mi := ch as MeshInstance3D
+			var m = mi.material_override
+			if m is StandardMaterial3D and (m as StandardMaterial3D).uv1_world_triplanar:
+				var own: StandardMaterial3D = (m as StandardMaterial3D).duplicate()
+				own.uv1_world_triplanar = false
+				own.uv1_offset = (p.get_meta("rest") as Vector3) * own.uv1_scale
+				mi.material_override = own
+
 func release(p: RigidBody3D, vel: Vector3) -> void:
 	if not p.freeze:
 		return
@@ -508,6 +524,8 @@ func release(p: RigidBody3D, vel: Vector3) -> void:
 		if _live_cnt >= ACTIVE_HARD:
 			dissolve(p, vel)
 			return
+	if p.has_meta("shell_of"):
+		_own_texture(p)
 	p.freeze = false
 	p.set_meta("t_rel", Time.get_ticks_msec())
 	_live_cnt += 1
@@ -1180,7 +1198,7 @@ func explode(center: Vector3, radius: float, power: float) -> Dictionary:
 		blasts.append(c)
 		var opened := 0
 		for sh in pieces.duplicate():                       # buildings in the blast come apart into cells first
-			if opened >= 10 or shells_open.size() >= Destruction.MAX_EXPANDED_SHELLS:
+			if opened >= Destruction.MAX_EXPAND_PER_BLAST or shells_open.size() >= Destruction.MAX_EXPANDED_SHELLS:
 				break
 			if Destruction.is_shell(sh) and sh.global_position.distance_to(c) <= radius * 0.9 + 4.0:
 				Destruction.expand(self, sh)
@@ -1406,6 +1424,8 @@ func _yard_box(pos: Vector3, size: Vector3, color: Color, mat: String, basis: Ba
 	b.transform = Transform3D(basis, pos)
 	b.set_meta("mat", mat)
 	b.set_meta("half", size * 0.5)
+	if basis != Basis.IDENTITY and mat == "metal":
+		b.set_meta("pad", true)                 # tilted signage: a designed ricochet surface, an exemption in the destructibility audit
 	return b
 
 func _wood_house(tx: int, tz: int, w: int, d: int, floors: int, group: String) -> void:

@@ -184,6 +184,12 @@ jobs:
       - name: Verify (v14 hillside cities - terrain, generator seeds, reachability, determinism)
         run: godot --headless --path launch -s tests/verify_hills.gd
 
+      - name: Verify (v15 mayhem - 20 levels, impact energy, shells, camera, blood, slow motion, envelope audit, Lv20 stress)
+        run: |
+          godot --headless --path launch -s tests/verify_mayhem.gd
+          godot --headless --path launch -s tests/verify_envelope.gd
+          godot --headless --path launch -s tests/verify_stress.gd
+
       - name: Physics regression vs Godot 4.4.1 reference
         run: |
           godot --headless --path launch -s tests/physics_baseline.gd -- "$GITHUB_WORKSPACE/physics_ci.json"

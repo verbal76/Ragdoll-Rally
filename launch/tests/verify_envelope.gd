@@ -11,6 +11,36 @@ func check(ok: bool, msg: String) -> void:
 	if not ok:
 		fails += 1
 
+
+## Every building on every board takes part in destruction: no solid static box/tower larger than a person-sized prop remains
+## unless it is on the short, legitimate exceptions list (terrain, boundaries, launch infrastructure, water, springy surfaces,
+## ricochet pads, trees).
+const EXEMPT_MATS := ["water", "trampoline", "ground", "canvas"]
+func _static_audit(main, id: String) -> void:
+	var T = main.town
+	var offenders: Array = []
+	var total_buildings := 0
+	for ch in T.get_children():
+		if ch is StaticBody3D:
+			if ch.has_meta("boundary") or ch.has_meta("ground") or ch.name == "Terrain" or ch.has_meta("glass") or ch.has_meta("decor"):
+				continue
+			var sz := Vector3.ZERO
+			for c2 in ch.get_children():
+				if c2 is CollisionShape3D and c2.shape is BoxShape3D:
+					sz = c2.shape.size
+				elif c2 is CollisionShape3D and c2.shape is CylinderShape3D:
+					sz = Vector3(c2.shape.radius * 2.0, c2.shape.height, c2.shape.radius * 2.0)
+			var mat: String = str(ch.get_meta("mat", "?"))
+			if EXEMPT_MATS.has(mat) or ch.get_meta("pad", false):
+				continue
+			# building-scale = at least 5 m on one horizontal axis and 4 m tall; trees (cylinders) and metal sign/ricochet pads are exempt
+			if sz.y >= 4.0 and maxf(sz.x, sz.z) >= 5.0 and not (ch.get_child(0) is CollisionShape3D and (ch.get_child(0) as CollisionShape3D).shape is CylinderShape3D):
+				offenders.append("%s %s mat %s at (%.0f,%.0f)" % [ch.name, str(sz), mat, ch.global_position.x, ch.global_position.z])
+	for p in T.pieces:
+		if Destruction.is_shell(p):
+			total_buildings += 1
+	check(offenders.is_empty(), "%s: no indestructible building-scale static solids remain %s" % [id, str(offenders.slice(0, 3))])
+
 func _init() -> void:
 	_run.call_deferred()
 
@@ -27,6 +57,7 @@ func _run() -> void:
 		main.start_game(0, Rules.env_index(id))
 		for i in 3:
 			await process_frame
+		_static_audit(main, id)
 		var T = main.town
 		var bands := [0, 0, 0, 0, 0, 0]          # Lv0-4, 5-8, 9-12, 13-16, 17-20, out of reach
 		var n := 0

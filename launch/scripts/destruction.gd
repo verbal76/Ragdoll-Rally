@@ -17,6 +17,7 @@ extends RefCounted
 const Rules := preload("res://scripts/rules.gd")
 
 const MAX_RELEASE_PER_IMPACT := 56      # rigid bodies one impact may free; the rest of the broken set dissolves into debris
+const MAX_EXPAND_PER_BLAST := 6         # shells built per blast (a build costs ~2.4 ms desktop; phones ~3x)
 const MAX_EXPANDED_SHELLS := 40         # expanded buildings per run (each keeps its cells alive until reset)
 const MAX_PATH := 70.0
 
@@ -33,6 +34,17 @@ const PROFILES := {
 
 static func profile(mat: String) -> Dictionary:
 	return PROFILES.get(mat, PROFILES["masonry"])
+
+## The profile for one piece: a DestructionProfile resource on its shell/meta wins over the material default.
+static func profile_of(p: Object) -> Dictionary:
+	var src: Object = p
+	if p.has_meta("shell_of") and is_instance_valid(p.get_meta("shell_of")):
+		src = p.get_meta("shell_of")
+	if src.has_meta("profile"):
+		var res = src.get_meta("profile")
+		if res is Resource and (res as Resource).has_method("to_dict"):
+			return res.to_dict()
+	return profile(str(p.get_meta("mat", "masonry")))
 
 # ------------------------------------------------------------------------------------------------ authoring
 ## Marks a frozen block as a shell. `builder` is a Callable returning Array[Dictionary] of cells:
@@ -63,7 +75,7 @@ static func _cell_body(t, shell: RigidBody3D, c: Dictionary, n: int) -> RigidBod
 	var b := RigidBody3D.new()
 	b.name = "%s_c%d" % [shell.name, n]
 	var size: Vector3 = c["size"]
-	b.mass = maxf(shell.mass * (size.x * size.y * size.z) / maxf(_shell_volume(shell), 0.01), 0.4) * float(profile(str(shell.get_meta("mat", "masonry")))["chunk_mass"])
+	b.mass = maxf(shell.mass * (size.x * size.y * size.z) / maxf(_shell_volume(shell), 0.01), 0.4) * float(profile_of(shell)["chunk_mass"])
 	b.collision_layer = 4
 	b.collision_mask = 1 | 2 | 4
 	b.physics_material_override = t._phys_stone
@@ -87,12 +99,13 @@ static func _cell_body(t, shell: RigidBody3D, c: Dictionary, n: int) -> RigidBod
 	mi.material_override = c["mat"]
 	b.add_child(mi)
 	b.transform = shell.transform * Transform3D(Basis.IDENTITY, c["off"])
+	var prof: Dictionary = profile_of(shell)
 	var mat: String = str(shell.get_meta("mat", "masonry"))
 	b.set_meta("rest", b.position)
 	b.set_meta("rest_basis", b.basis)
 	b.set_meta("kind", c.get("kind", "wall"))
 	b.set_meta("group", shell.get_meta("group", ""))
-	b.set_meta("tough", float(shell.get_meta("tough", 6.0)) * float(profile(mat)["cell_tough"]))
+	b.set_meta("tough", float(shell.get_meta("tough", 6.0)) * float(prof.get("strength", 1.0)) * float(prof["cell_tough"]))
 	b.set_meta("frozen_piece", true)
 	b.set_meta("mat", mat)
 	b.set_meta("shell_of", shell)
@@ -215,6 +228,8 @@ static func punch(t, hit: RigidBody3D, pos: Vector3, dir: Vector3, effk: float, 
 			start = hit                                 # budget: the building falls as one big chunk instead
 	if start == null or not start.freeze:
 		return res
+	if effk < float(start.get_meta("tough", 6.0)):
+		return res                                       # a tap that cannot break the piece it touched: normal bounce
 	var d: Vector3 = dir.normalized()
 	var reach: float = clampf(12.0 + 0.12 * effk, 12.0, MAX_PATH)
 	var tube: float = clampf(1.3 + 0.012 * effk, 1.3, 4.0)
@@ -241,7 +256,7 @@ static func punch(t, hit: RigidBody3D, pos: Vector3, dir: Vector3, effk: float, 
 	var costs: Array = []
 	for p in ordered:
 		costs.append(Rules.piece_cost(float((p as RigidBody3D).get_meta("tough", 6.0))))
-	var walk: Dictionary = Rules.punch_walk(Rules.punch_budget(effk), costs)
+	var walk: Dictionary = Rules.punch_walk(Rules.punch_budget(effk), costs, true)
 	var n: int = int(walk["n"])
 	res["keep"] = float(walk["keep"])
 	res["blocked"] = bool(walk["blocked"])
@@ -253,7 +268,7 @@ static func punch(t, hit: RigidBody3D, pos: Vector3, dir: Vector3, effk: float, 
 	for i in n:
 		var p := ordered[i] as RigidBody3D
 		var mat: String = str(p.get_meta("mat", "masonry"))
-		var prof: Dictionary = profile(mat)
+		var prof: Dictionary = profile_of(p)
 		var v: Vector3 = d * minf(effk * push, 55.0) * float(prof["impulse"]) * (1.0 - 0.35 * float(i) / maxf(float(n), 1.0))
 		v += (p.global_position - pos).slide(d).normalized() * 3.0 + Vector3(0, 2.5, 0)
 		last_pos = p.global_position
