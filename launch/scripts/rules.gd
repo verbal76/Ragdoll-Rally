@@ -327,6 +327,61 @@ static func punch_walk(budget: float, costs: Array) -> Dictionary:
 		keep = clampf(sqrt(frac) * 0.6, 0.0, 0.6)
 	return {"n": n, "left": frac, "blocked": blocked, "keep": keep}
 
+# ----------------------------------------------------------------- launch envelope (what each Launch Power level can reach)
+const OVERDRIVE_LAUNCH_SPEED := 68.0        # mirrors Main.OVERDRIVE_SPEED (full overdrive pull)
+const LAUNCH_Y := 2.3                        # launcher height above the ground plane
+static var _reach_cache: Dictionary = {}
+
+## Highest point (m above the ground plane) a legal launch at Launch Power `level` can pass through at horizontal distance x
+## (drag-free ballistics under the range/apex governor and the soft pitch ceiling, best character, any pull power). Callers that
+## place content multiply by ~0.88 for drag and aim error.
+static func reach_height(x: float, level: int, power_stat: int = 5) -> float:
+	var key: int = level * 100000 + int(round(x / 2.0)) * 10 + power_stat
+	if _reach_cache.has(key):
+		return _reach_cache[key]
+	var lv: Dictionary = empty_levels()
+	lv["power"] = level
+	var fx: Dictionary = effective({"power": power_stat, "bounce": 3, "ricochet": 3, "spin": 3, "durability": 3, "chaos": 3}, lv)
+	var vmax: float = OVERDRIVE_LAUNCH_SPEED * float(fx["launch_mult"])
+	var best := 0.0
+	for pd in range(3, 40):
+		var th: float = deg_to_rad(float(pd))
+		var v_in: float = 10.0
+		while v_in <= vmax + 0.01:
+			var v: float = governed_speed(v_in, th, fx)
+			var t: float = x / (v * cos(th))
+			var y: float = LAUNCH_Y + v * sin(th) * t - 0.5 * g_eff() * t * t
+			if y > best:
+				best = y
+			v_in += 3.0
+	_reach_cache[key] = best
+	return best
+
+## Lowest Launch Power level (0..20) whose envelope covers a point at distance x and height h (m above ground); 21 = out of reach.
+static func min_level_to_reach(x: float, h: float, margin: float = 0.88) -> int:
+	for l in range(0, MAYHEM_MAX + 1):
+		if reach_height(x, l) * margin >= h:
+			return l
+	return MAYHEM_MAX + 1
+
+# ----------------------------------------------------------------- chaos scoring (destruction is the reward; distance is delivery)
+## Per-piece smash points scale with the square root of the Destruction multiplier: Lv20 breaks ~9x more per hit, so the
+## per-piece value only triples and the score is driven by how much actually falls (and by the events below), not by one multiplier.
+static func destruct_score_mult(destruct_mult: float) -> float:
+	return sqrt(maxf(destruct_mult, 1.0))
+
+static func demolish_points(cells: int) -> int:
+	return 120 + 18 * mini(cells, 60)
+
+static func pierce_points(pieces_broken: int) -> int:
+	return 250 + 40 * mini(pieces_broken, 24)
+
+static func collapse_points(pieces: int) -> int:
+	return 200 + 12 * mini(pieces, 40)
+
+static func altitude_points(y: float) -> int:
+	return 100 + int(clampf(y - 25.0, 0.0, 60.0) * 3.0)
+
 # ----------------------------------------------------------------- cinematic slowdown (event driven, physics safe)
 ## Time dilation (Engine.time_scale scales the fixed physics step, so the simulation stays stable) is triggered only by
 ## significant destruction, never by distance, and never stacks: nearby events merge into one longer, stronger moment.

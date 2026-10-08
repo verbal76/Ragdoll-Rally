@@ -54,7 +54,7 @@ func _reachable(p: Vector3) -> bool:
 		var v: float = sqrt(g * dist * dist / den)
 		if v > 68.0 or v < 8.0:
 			continue
-		if Rules.ideal_range(v, th) <= 180.5 and Rules.ideal_apex(v, th) <= 60.5:
+		if Rules.ideal_range(v, th) <= Rules.RANGE_CAP_BASE + Rules.MAYHEM_MAX * Rules.RANGE_CAP_PER_LEVEL + 0.5 and Rules.ideal_apex(v, th) <= Rules.APEX_CAP_BASE + Rules.MAYHEM_MAX * Rules.APEX_CAP_PER_LEVEL + 0.5:
 			return true
 	return false
 
@@ -72,7 +72,7 @@ func _first_hit(ter, lots: Array, pitch_deg: float, speed: float, yaw_deg: float
 		var x: float = vx * t
 		var z: float = vz * t
 		var y: float = 2.3 + vy * t - 0.5 * g * t * t
-		if x > 215.0 or absf(z) > 130.0:
+		if x > Terrain.X1 or absf(z) > 130.0:
 			return {"x": x, "hit": "wall"}
 		if y < ter.height(x, z) + 0.2:
 			return {"x": x, "hit": "terrain"}

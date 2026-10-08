@@ -201,7 +201,7 @@ static func _radius(p: RigidBody3D) -> float:
 ##   {"released": Array[RigidBody3D], "dissolved": Array, "keep": float, "blocked": bool, "n": int, "exit": Vector3, "left": float}
 ## `released` are the bodies that became dynamic; the caller scores them and spawns the effects.
 static func punch(t, hit: RigidBody3D, pos: Vector3, dir: Vector3, effk: float, push: float) -> Dictionary:
-	var res := {"released": [], "dissolved": [], "keep": 0.0, "blocked": true, "n": 0, "exit": pos, "left": 0.0}
+	var res := {"released": [], "dissolved": [], "keep": 0.0, "blocked": true, "n": 0, "exit": pos, "left": 0.0, "collapsed": 0}
 	if hit == null:
 		return res
 	var start: RigidBody3D = hit
@@ -277,7 +277,9 @@ static func punch(t, hit: RigidBody3D, pos: Vector3, dir: Vector3, effk: float, 
 			if effk >= tough * 1.4:
 				t.release(p, (p.global_position - pos).normalized() * 3.0 + d * effk * push * 0.25 + Vector3(0, 2.0, 0))
 				rel.append(p)
-	collapse(t, rel)
+	var fell: Array = collapse(t, rel)
+	rel.append_array(fell)
+	res["collapsed"] = fell.size()
 	res["released"] = rel
 	res["dissolved"] = dissolved
 	res["exit"] = last_pos
@@ -296,15 +298,16 @@ static func _nearest_piece(t, shell: RigidBody3D, pos: Vector3) -> RigidBody3D:
 
 # ------------------------------------------------------------------------------------------------ support / collapse
 ## Cells whose supporting column cell was released fall too (floors above a blown-out ground storey pancake down).
-static func collapse(t, released: Array) -> int:
+static func collapse(t, released: Array) -> Array:
 	var cols := {}
-	var n := 0
+	var out: Array = []
 	for p in released:
 		if not (p as RigidBody3D).has_meta("shell_of"):
 			continue
 		var sh = (p as RigidBody3D).get_meta("shell_of")
 		if is_instance_valid(sh):
 			cols[sh] = true
+	var stack_roots: Array = cols.keys()
 	for sh in cols.keys():
 		if not bool(profile(str((sh as RigidBody3D).get_meta("mat", "masonry")))["collapse"]):
 			continue
@@ -323,5 +326,70 @@ static func collapse(t, released: Array) -> int:
 				var key := Vector2i(ix.x, ix.z)
 				if lowest.has(key) and ix.y > int(lowest[key]):
 					t.release(c, Vector3(randf_range(-1.5, 1.5), -1.0, randf_range(-1.5, 1.5)))
-					n += 1
-	return n
+					out.append(c)
+	out.append_array(collapse_stacks(t, stack_roots))
+	return out
+
+# ------------------------------------------------------------------------------------------------ vertical stacks
+## Links two vertically adjacent shells (a skyscraper is a stack of storeys). If the lower one loses its support the upper falls.
+static func link_stack(lower: RigidBody3D, upper: RigidBody3D) -> void:
+	lower.set_meta("above", upper)
+	upper.set_meta("below", lower)
+
+## A stack segment is supported while at least half of its top-floor cells (or the intact shell) stand.
+static func supported(shell: RigidBody3D) -> bool:
+	if not shell.has_meta("shell_open"):
+		return true
+	var cells: Array = shell.get_meta("shell_cells", [])
+	var top_f := -1
+	for cb in cells:
+		var ix: Vector3i = (cb as RigidBody3D).get_meta("cidx")
+		if (cb as RigidBody3D).get_meta("kind") != "roof":
+			top_f = maxi(top_f, ix.y)
+	if top_f < 0:
+		return true
+	var total := 0
+	var standing := 0
+	for cb in cells:
+		var c := cb as RigidBody3D
+		var ix2: Vector3i = c.get_meta("cidx")
+		if ix2.y == top_f and c.get_meta("kind") != "roof":
+			total += 1
+			if c.freeze and not c.get_meta("dissolved", false):
+				standing += 1
+	return total == 0 or float(standing) / float(total) >= 0.5
+
+## Upper segments whose support is gone come down, floor by floor, all the way up the stack. Returns the pieces released.
+static func collapse_stacks(t, shells: Array) -> Array:
+	var out: Array = []
+	var seen := {}
+	for s in shells:
+		var cur = s
+		while cur != null and is_instance_valid(cur) and cur.has_meta("above") and not seen.has(cur):
+			seen[cur] = true
+			var up = cur.get_meta("above")
+			if not is_instance_valid(up) or supported(cur):
+				break
+			if up.has_meta("shell_open"):
+				pass
+			elif t.shells_open.size() < MAX_EXPANDED_SHELLS and is_shell(up):
+				expand(t, up)
+			else:
+				if up.freeze and t.pieces.has(up):
+					t.release(up, Vector3(0, -2.0, 0))          # budget fallback: the whole segment drops as one slab
+					out.append(up)
+				cur = up
+				continue
+			var n_up := 0
+			for cb in (up.get_meta("shell_cells", []) as Array):
+				var c := cb as RigidBody3D
+				if c.freeze and t.pieces.has(c) and not c.get_meta("capped", false):
+					var v := Vector3(randf_range(-1.5, 1.5), -2.0, randf_range(-1.5, 1.5))
+					if t.active_released() + n_up < t.ACTIVE_HARD and n_up < MAX_RELEASE_PER_IMPACT:
+						t.release(c, v)
+						out.append(c)
+						n_up += 1
+					else:
+						t.dissolve(c, v)
+			cur = up
+	return out

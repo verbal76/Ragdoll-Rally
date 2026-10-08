@@ -947,8 +947,12 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 		var released: Array = (pr["released"] as Array) + (pr["dissolved"] as Array)
 		if released.size() > 0:
 			var dmg: int = 0
+			var shells_hit := {}
 			for rp in released:
-				var pts: int = int(damage_points(rp, eff) * float(fxp["destruct_mult"]))
+				if (rp as RigidBody3D).has_meta("shell_of"):
+					var shk = (rp as RigidBody3D).get_meta("shell_of")
+					shells_hit[shk] = int(shells_hit.get(shk, 0)) + 1
+				var pts: int = int(damage_points(rp, eff) * Rules.destruct_score_mult(float(fxp["destruct_mult"])))
 				if scoring.add_smash(rp.get_instance_id(), pts, rp.global_position):
 					dmg += pts
 			scoring.awarded.emit("SMASH x%d" % released.size(), dmg, pos)
@@ -960,6 +964,16 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 			if released.size() > 4:
 				fx.debris(m0, (released[released.size() - 1] as Node3D).global_position, vdir, 1.0)
 			sfx.play(str((Rules.MATERIALS.get(m0, Rules.MATERIALS["masonry"]) as Dictionary)["sound"]), 0.0, randf_range(0.8, 1.1))
+			for shk in shells_hit.keys():
+				var tot: int = int((shk as RigidBody3D).get_meta("shell_n", 1))
+				if float(shells_hit[shk]) >= 0.6 * float(tot) and tot >= 4:
+					scoring.award("demo_%d" % (shk as Object).get_instance_id(), "BUILDING DOWN!", Rules.demolish_points(tot), "Destruction", pos)
+			if int(pr["n"]) >= 4 and not bool(pr["blocked"]):
+				scoring.award("thru_%d" % piece.get_instance_id(), "WENT THROUGH!", Rules.pierce_points(int(pr["n"])), "Destruction", pos)
+			if int(pr["collapsed"]) >= 3:
+				scoring.award("fall_%d_%d" % [piece.get_instance_id(), int(now)], "COLLAPSE!", Rules.collapse_points(int(pr["collapsed"])), "Destruction", pos)
+			if pos.y > 28.0:
+				scoring.award("alt_%d" % int(pos.y / 12.0), "HIGH RISE HIT!", Rules.altitude_points(pos.y), "Destruction", pos)
 			pass_through = true
 			keep = maxf(float(pr["keep"]), 0.3)
 			mat = m0

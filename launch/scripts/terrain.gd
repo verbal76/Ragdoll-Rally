@@ -6,12 +6,13 @@ extends RefCounted
 ## Use with:  const Terrain := preload("res://scripts/terrain.gd")
 
 const X0 := -25.0
-const X1 := 215.0
+const X1 := 330.0
 const Z0 := -130.0
 const Z1 := 130.0
 const CELL := 2.5
 const PAD_X := 16.0            # flat launch pad / approach runs to here, then the land starts to climb
 const RAMP_X0 := 22.0
+const RAMP_LEN := 153.0        # the land climbs over this run and then holds its crest (the original 215 m world used X1 - 62)
 
 var p: Dictionary
 var seed: int = 1
@@ -48,7 +49,7 @@ func fbm(x: float, z: float, s: int = 0) -> float:
 
 # --------------------------------------------------------------------- height field
 func height(x: float, z: float) -> float:
-	var u: float = clampf((x - RAMP_X0) / (X1 - 40.0 - RAMP_X0), 0.0, 1.0)
+	var u: float = clampf((x - RAMP_X0) / RAMP_LEN, 0.0, 1.0)
 	var ramp: float = float(p["rise"]) * pow(u, 1.2)
 	var bowl: float = float(p["side"]) * pow(absf(z) / Z1, 2.0) * smoothstep(0.0, 0.5, u)
 	var vw: float = float(p["valley_w"])

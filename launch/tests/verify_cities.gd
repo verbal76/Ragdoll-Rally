@@ -94,7 +94,7 @@ func _reachable(p: Vector3) -> bool:
 		if den <= 0.0:
 			continue
 		var v: float = sqrt(g * dist * dist / den)
-		if v <= 68.0 and v >= 8.0 and Rules.ideal_range(v, th) <= 180.5 and Rules.ideal_apex(v, th) <= 60.5:
+		if v <= 150.0 and v >= 8.0 and Rules.ideal_range(v, th) <= Rules.RANGE_CAP_BASE + Rules.MAYHEM_MAX * Rules.RANGE_CAP_PER_LEVEL + 0.5 and Rules.ideal_apex(v, th) <= Rules.APEX_CAP_BASE + Rules.MAYHEM_MAX * Rules.APEX_CAP_PER_LEVEL + 0.5:
 			return true
 	return false
 
@@ -215,10 +215,10 @@ func _run() -> void:
 			tot_score += r2.score
 			if r2.score > 0:
 				runs_with_hits += 1
-			var good2: bool = r2.state != 1 and r2.sane and r2.min_agl > -1.5 and r2.frames > 20 and r2.max_x < 215.0
+			var good2: bool = r2.state != 1 and r2.sane and r2.min_agl > -1.5 and r2.frames > 20 and r2.max_x < main.town.WORLD_X_MAX
 			if not good2:
 				ok_all = false
-			if r2.skips > 14 or r2.score > 80000:
+			if r2.skips > 14 or r2.score > 600000:
 				skip_sane = false
 			print("      throw %s char %d maxed: frames %d score %d skips %d limbs %d end x %.0f y %.1f worst %.1f ms awake %d" % [spec, spec[0], r2.frames, r2.score, r2.skips, r2.limbs, r2.end.x, r2.end.y, r2.worst_ms, r2.awake])
 		check(ok_all, "%s: all %d automated throws end cleanly: finite physics, no fall-through, no stuck run" % [id, runs])

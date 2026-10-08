@@ -392,9 +392,13 @@ static func _unit_plan(nw: int, nd: int, fv: int, roof: int, vs: int) -> Array:
 				if i == 0:
 					faces.append(-PI * 0.5)
 				var h: int = (i * 7 + k * 13 + f * 5 + vs * 3) % 9
-				var rot: float = faces[0] if (f == 0 or faces.size() == 1) else faces[h % faces.size()]
+				var rot: float = 0.0
+				if not faces.is_empty():
+					rot = faces[0] if (f == 0 or faces.size() == 1) else faces[h % faces.size()]
 				var nm: String
-				if f == 0:
+				if faces.is_empty():
+					nm = "building-block"                    # interior cell of a 3x3 footprint: no street or side faces
+				elif f == 0:
 					nm = ground[(i + k + vs) % ground.size()] if (k == nd - 1 or faces.size() == 1) else "building-block"
 				else:
 					nm = upper[h % upper.size()]
@@ -584,6 +588,7 @@ static func _building(c: Ctx, center: Vector2, w: float, d: float, yaw: float, f
 	var kmat: StandardMaterial3D = _kit_mat(c, tint, 1 if _hf(seedv, 11, 7) < 0.3 else 0)
 	var segs: int = 1 if h_total <= 13.0 or fv < 4 else 2
 	var first: RigidBody3D = null
+	var first_prev: RigidBody3D = null
 	var y: float = bottom
 	var f_done: int = 0
 	var roof_body: RigidBody3D = null
@@ -600,6 +605,9 @@ static func _building(c: Ctx, center: Vector2, w: float, d: float, yaw: float, f
 		Destruction.register_shell(b, _kit_cells.bind(nwc, ndc, f_seg, seg_roof_kind, vs, kit["scale"], Vector3(w, seg_h, d), kmat, roof_unit, is_top), nwc * ndc * (f_seg + (1 if seg_roof_kind < 2 else 0)))
 		if first == null:
 			first = b
+		else:
+			Destruction.link_stack(first_prev, b)
+		first_prev = b
 		if is_top:
 			roof_body = b
 		y += seg_h

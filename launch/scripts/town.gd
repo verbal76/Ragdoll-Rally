@@ -8,6 +8,7 @@ const Rules := preload("res://scripts/rules.gd")
 const Cities := preload("res://scripts/cities.gd")
 const Hillside := preload("res://scripts/hillside.gd")
 const Destruction := preload("res://scripts/destruction.gd")
+const Outskirts := preload("res://scripts/outskirts.gd")
 
 signal piece_released(piece: RigidBody3D)
 signal ignited(node: Node3D, pos: Vector3)
@@ -19,10 +20,11 @@ const PROP_S := 2.5     # detail props are tiny in the kit
 const POLE_TOP := Vector3(0.0, 3.4, 0.0)
 const POLE_Z := 1.7
 const WORLD_X_MIN := -25.0
-const WORLD_X_MAX := 215.0
+const WORLD_X_MAX := 330.0     # 215 in v14; deep districts and Lv20 flights reach out to here
 const WORLD_Z := 130.0
-const ACTIVE_CAP := 140         # settled released pieces beyond this are re-frozen (aftermath stays visible)
-const ACTIVE_HARD := 170        # never more than this many simulated pieces: extra broken pieces dissolve into particle debris
+const ACTIVE_CAP := 100         # settled released pieces beyond this are re-frozen (aftermath stays visible)
+const ACTIVE_HARD := 125        # never more than this many simulated pieces: extra broken pieces dissolve into particle debris
+var _hctx = null                             # Hillside.Ctx shared by shell_box (materials cache)
 var shells_open: Array[RigidBody3D] = []   # expanded shells (Destruction.expand), restored on reset
 
 var pieces: Array[RigidBody3D] = []
@@ -88,15 +90,18 @@ func build(p_legacy: bool = false, p_env: String = "city") -> void:
 	if not legacy and Rules.is_hill(env_id):
 		smash_push = 0.9
 		Hillside.build(self, env_id)
+		Outskirts.build(self, env_id)
 		_perimeter()
 		return
 	if env_id == "yard" and not legacy:
 		build_yard()
+		Outskirts.build(self, env_id)
 		_perimeter()
 		return
 	if not legacy and Cities.IDS.has(env_id):
 		smash_push = 0.9
 		Cities.build(self, env_id)
+		Outskirts.build(self, env_id)
 		_finish_glass()
 		_perimeter()
 		return
@@ -117,6 +122,7 @@ func build(p_legacy: bool = false, p_env: String = "city") -> void:
 		_filler()
 		_deep_city()
 		_dense_city()
+		Outskirts.build(self, env_id)
 		_perimeter()
 		_decor_city()
 
@@ -154,11 +160,11 @@ func _ground() -> void:
 	g.physics_material_override = pm
 	var cs := CollisionShape3D.new()
 	var sh := BoxShape3D.new()
-	var gsz := Vector3(300, 2, 120) if legacy else Vector3(460, 2, 340)
+	var gsz := Vector3(300, 2, 120) if legacy else Vector3(560, 2, 340)
 	sh.size = gsz
 	cs.shape = sh
 	g.add_child(cs)
-	g.position = Vector3(80, -1, 0) if legacy else Vector3(95, -1, 0)
+	g.position = Vector3(80, -1, 0) if legacy else Vector3(130, -1, 0)
 	var vis := _box_mesh(gsz, ground_color)
 	g.add_child(vis)
 	add_child(g)
@@ -241,7 +247,13 @@ func _piece(model: String, tile: Vector3, kind: String, group: String, size: Vec
 	(groups[group] as Array).append(b)
 	return b
 
-func _static_kit(model: String, tile: Vector3, size: Vector3 = Vector3.ONE) -> StaticBody3D:
+func _static_kit(model: String, tile: Vector3, size: Vector3 = Vector3.ONE) -> Node3D:
+	if not legacy:
+		# the fortress is destructible like everything else - it is just very tough masonry (Destruction levels chew through it)
+		var wood: bool = model.begins_with("wood")
+		var pc := _piece(model, tile, "wall", "fort_%d" % int(tile.x), size, 3.0 if wood else 9.0, 4.5 if wood else 11.0)
+		static_pos.append(pc.position)
+		return pc
 	var h: float = size.y * S
 	var b := StaticBody3D.new()
 	b.collision_layer = 1
@@ -491,7 +503,14 @@ func release(p: RigidBody3D, vel: Vector3) -> void:
 		return
 	if p.get_meta("capped", false):
 		return
+	if _live_cnt >= ACTIVE_HARD:                 # the simulation budget is spent: this piece becomes a puff of debris instead
+		_live_check()
+		if _live_cnt >= ACTIVE_HARD:
+			dissolve(p, vel)
+			return
 	p.freeze = false
+	p.set_meta("t_rel", Time.get_ticks_msec())
+	_live_cnt += 1
 	released_order.append(p)
 	p.linear_velocity = vel
 	p.angular_velocity = Vector3(randf_range(-4, 4), randf_range(-4, 4), randf_range(-4, 4))
@@ -600,6 +619,31 @@ func _chimney_stack(tx: float, ty: float, tz: float, n: int, group: String) -> R
 		var c := _piece("column", Vector3(tx, ty + i * 1.0, tz), "column", group, Vector3(0.4, 1.0, 0.4), 1.0, 3.5)
 		c.set_meta("group_all", true)
 		top = c
+	return top
+
+## A building-sized box as a stack of destruction shells (<= 18 m each) with a window-textured facade, linked so the upper
+## storeys fall when the ones under them are destroyed. Replaces the old immovable static towers. Returns the top shell.
+func shell_box(pos: Vector3, size: Vector3, color: Color, mat_name: String, group: String, tough: float = 7.0, windows: bool = true) -> RigidBody3D:
+	if _hctx == null:
+		_hctx = Hillside.Ctx.new()
+		_hctx.t = self
+	var segs: int = maxi(1, int(ceil(size.y / 18.0)))
+	var seg_h: float = size.y / float(segs)
+	var prev: RigidBody3D = null
+	var top: RigidBody3D = null
+	var mat: Material = Hillside._wall_mat(_hctx, color) if windows else _cmat(color)
+	for i in segs:
+		var cy: float = pos.y - size.y * 0.5 + (float(i) + 0.5) * seg_h
+		var b: RigidBody3D = _block(Vector3(pos.x, cy, pos.z), Vector3(size.x, seg_h, size.z), color, mat_name, 3.0 + size.x * seg_h * size.z * 0.012, tough, group)
+		for ch in b.get_children():
+			if ch is MeshInstance3D:
+				(ch as MeshInstance3D).material_override = mat
+		var n := Vector3i(clampi(int(round(size.x / 4.5)), 1, 4), clampi(int(round(seg_h / 3.6)), 1, 6), clampi(int(round(size.z / 4.5)), 1, 4))
+		Destruction.register_shell(b, Destruction.box_cells.bind(Vector3(size.x, seg_h, size.z), mat, n), n.x * n.y * n.z)
+		if prev != null:
+			Destruction.link_stack(prev, b)
+		prev = b
+		top = b
 	return top
 
 func _static_box(pos: Vector3, size: Vector3, color: Color, visual: bool = true) -> StaticBody3D:
@@ -726,6 +770,11 @@ func _physics_process(dt: float) -> void:
 		_cap_timer = 0.0
 		enforce_active_cap()
 
+var _live_cnt: int = 0                           # released, still-simulated pieces (recounted when the budget is reached)
+
+func _live_check() -> void:
+	_live_cnt = active_released()
+
 func active_released() -> int:
 	var n: int = 0
 	for p in released_order:
@@ -735,6 +784,12 @@ func active_released() -> int:
 
 ## Re-freeze the oldest settled released pieces so the simulation stays bounded.
 func enforce_active_cap() -> void:
+	# settled chunks stop being simulated after a while and stay where they fell (the aftermath persists, the physics cost does not)
+	var now_ms: int = Time.get_ticks_msec()
+	for p in released_order:
+		if is_instance_valid(p) and not p.freeze and now_ms - int(p.get_meta("t_rel", now_ms)) > 7000 and p.linear_velocity.length() < 0.5:
+			p.set_meta("capped", true)
+			p.freeze = true
 	if active_released() <= ACTIVE_CAP:
 		return
 	for p in released_order:
@@ -787,6 +842,7 @@ func reset_in_place() -> void:
 	for b in props:                     # second pass: moving neighbours would wake sleepers
 		b.sleeping = true
 	released_order.clear()
+	_live_cnt = 0
 	_restore_decor()
 	_restore_glass()
 	fire_reset()
@@ -1163,7 +1219,7 @@ func explode(center: Vector3, radius: float, power: float) -> Dictionary:
 				b.collision_layer = 0
 				b.freeze = true
 				queue.append(b.global_position)
-	Destruction.collapse(self, released)
+	released.append_array(Destruction.collapse(self, released))
 	for c in blasts:
 		ignite_near(c, radius * 0.9, 0.75)
 	return {"released": released, "blasts": blasts, "power": power, "radius": radius}

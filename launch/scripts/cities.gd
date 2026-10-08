@@ -40,7 +40,7 @@ static func downtown(t) -> void:
 			var zc: float = float(band) * 18.0
 			var col: Color = DT_COLORS[hv % DT_COLORS.size()]
 			var mat: String = "metal" if hv % 3 == 0 else "masonry"
-			t._yard_box(Vector3(x, h * 0.5, zc), Vector3(13.0, h, 14.0), col, mat)
+			t.shell_box(Vector3(x, h * 0.5, zc), Vector3(13.0, h, 14.0), col, mat, gk + "_body", 7.0)
 			# avenue-facing glass curtain wall, 0.9 m proud of the wall (smash through into the gap)
 			var panes: Array = t._glass_wall(Vector3(x, 0.0, zc - float(band) * 7.9), Vector3.RIGHT, Vector3(0, 0, -band), 13.0, h - 2.0, 4.3, 5.0)
 			if k == 0:                                                 # lobby glass on the front face
@@ -77,7 +77,7 @@ static func downtown(t) -> void:
 			t._prop_box(Vector3(x + 9.0, 0.0, zc - float(band) * 10.5), Vector3(3.0, 1.5, 1.6), Color(0.2, 0.45, 0.25), "metal", 25.0)
 			# rear tower band (taller backdrop that can still be hit)
 			var h2: float = 30.0 + float(t.hsh(k, band + 9) % 5) * 4.0
-			t._yard_box(Vector3(x + 9.0, h2 * 0.5, float(band) * 37.0), Vector3(14.0, h2, 14.0), DT_COLORS[(hv + 2) % DT_COLORS.size()], "masonry")
+			t.shell_box(Vector3(x + 9.0, h2 * 0.5, float(band) * 37.0), Vector3(14.0, h2, 14.0), DT_COLORS[(hv + 2) % DT_COLORS.size()], "masonry", gk + "_rearbody", 7.0)
 			t._glass_wall(Vector3(x + 9.0, 0.0, float(band) * 37.0 - float(band) * 7.9), Vector3.RIGHT, Vector3(0, 0, -band), 14.0, h2 * 0.5, 4.6, 5.0)
 			for rx in [-3.0, 3.0]:
 				t._block(Vector3(x + 9.0 + rx, h2 + 1.5, float(band) * 37.0), Vector3(3.0, 3.0, 3.0), Color(0.5, 0.5, 0.55), "masonry", 3.0, 6.0, gk + "_rear")
@@ -240,10 +240,10 @@ static func suburbia(t) -> void:
 # ============================================================================ INDUSTRIAL: heavy destruction + chains
 static func _warehouse(t, cx: float, cz: float, w: float, d: float, h: float, col: Color, g: String) -> void:
 	var wall_col: Color = col.darkened(0.1)
-	t._yard_box(Vector3(cx, h, cz), Vector3(w + 0.6, 0.6, d + 0.6), wall_col.darkened(0.2), "metal")         # roof
-	t._yard_box(Vector3(cx + w * 0.5, h * 0.5, cz), Vector3(0.7, h, d), wall_col, "metal")                   # back wall
-	t._yard_box(Vector3(cx, h * 0.5, cz - d * 0.5), Vector3(w, h, 0.7), wall_col, "metal")                   # side walls
-	t._yard_box(Vector3(cx, h * 0.5, cz + d * 0.5), Vector3(w, h, 0.7), wall_col, "metal")
+	t.shell_box(Vector3(cx, h, cz), Vector3(w + 0.6, 0.6, d + 0.6), wall_col.darkened(0.2), "metal", g + "_roof", 8.0, false)         # roof
+	t.shell_box(Vector3(cx + w * 0.5, h * 0.5, cz), Vector3(0.7, h, d), wall_col, "metal", g + "_back", 9.0, false)                   # back wall
+	t.shell_box(Vector3(cx, h * 0.5, cz - d * 0.5), Vector3(w, h, 0.7), wall_col, "metal", g + "_sideA", 9.0, false)                   # side walls
+	t.shell_box(Vector3(cx, h * 0.5, cz + d * 0.5), Vector3(w, h, 0.7), wall_col, "metal", g + "_sideB", 9.0, false)
 	var cols: int = int(d / 3.0)
 	var rows: int = int(h / 3.5)
 	for r in rows:                                                                                           # breakable front panels
@@ -283,14 +283,14 @@ static func industrial(t) -> void:
 	# cranes
 	var crane_cols := Color(0.95, 0.75, 0.1)
 	for cz in [-40.0, 38.0]:
-		t._yard_box(Vector3(78.0, 17.0, cz), Vector3(2.5, 34.0, 2.5), crane_cols, "metal")
-		t._yard_box(Vector3(64.0, 34.0, cz), Vector3(30.0, 1.6, 1.6), crane_cols, "metal")
+		t.shell_box(Vector3(78.0, 17.0, cz), Vector3(2.5, 34.0, 2.5), crane_cols, "metal", "crane_mast_%d" % int(cz), 9.0, false)
+		t.shell_box(Vector3(64.0, 34.0, cz), Vector3(30.0, 1.6, 1.6), crane_cols, "metal", "crane_boom_%d" % int(cz), 8.0, false)
 		var hook = t._yard_box(Vector3(56.0, 28.0, cz), Vector3(1.4, 1.4, 1.4), Color(0.3, 0.3, 0.32), "metal")
 		if cz > 0.0:
 			t._bonus(hook, "ind_hook", "Crane Hook", 700)
 	# smokestacks: static base + three breakable top blocks that topple
 	for sp in [Vector3(112.0, 0.0, 30.0), Vector3(126.0, 0.0, 34.0)]:
-		t._yard_box(Vector3(sp.x, 9.0, sp.z), Vector3(4.5, 18.0, 4.5), Color(0.55, 0.3, 0.25), "masonry")
+		t.shell_box(Vector3(sp.x, 9.0, sp.z), Vector3(4.5, 18.0, 4.5), Color(0.55, 0.3, 0.25), "masonry", "stack_base_%d" % int(sp.x), 8.0, false)
 		var top = null
 		for lv in 3:
 			top = t._block(Vector3(sp.x, 20.25 + 4.5 * float(lv), sp.z), Vector3(4.5, 4.5, 4.5), Color(0.55, 0.3, 0.25), "masonry", 6.0, 7.0, "stack_%d" % int(sp.x), true)
@@ -331,7 +331,7 @@ static func _kiosk(t, x: float, z: float, g: String) -> void:
 	t._block(Vector3(x, 0.9, z + (1.7 if z < 0.0 else -1.7)), Vector3(3.0, 0.5, 0.8), Color(1, 0.8, 0.3), "canvas", 1.0, 2.5, g)
 
 static func _hotel(t, cx: float, cz: float, w: float, h: float, d: float, col: Color, toward: int, label: String) -> Object:
-	var body = t._yard_box(Vector3(cx, h * 0.5, cz), Vector3(w, h, d), col, "masonry")
+	var body = t.shell_box(Vector3(cx, h * 0.5, cz), Vector3(w, h, d), col, "masonry", "hotel_body_%d" % int(cx), 7.0)
 	var face_z: float = cz + float(toward) * (d * 0.5 + 0.9)
 	t._glass_wall(Vector3(cx, 0.0, face_z), Vector3.RIGHT, Vector3(0, 0, toward), w, h - 2.0, w / float(maxi(int(w / 4.6), 1)), 4.0)
 	var hg: String = "hotel_%d" % int(cx)
@@ -376,7 +376,7 @@ static func resort(t) -> void:
 			t._prop_box(Vector3(pc.x - 6.0 + float(i) * 6.0, 0.0, pc.z + (5.0 if pc.z < 0.0 else -5.0)), Vector3(2.0, 0.5, 0.8), Color(1, 1, 1), "canvas", 3.0)
 		t._yard_box(Vector3(pc.x + 7.0, 2.2, pc.z + (5.2 if pc.z < 0.0 else -5.2)), Vector3(4.2, 0.2, 4.2), Color(1.0, 0.4, 0.4), "canvas", Basis(Vector3.BACK, deg_to_rad(12.0)))
 	# waterslide: a tower and two angled, offset segments (slippery, odd rebounds)
-	t._yard_box(Vector3(70.0, 7.0, 14.0), Vector3(4.0, 14.0, 4.0), Color(0.95, 0.5, 0.15), "metal")
+	t.shell_box(Vector3(70.0, 7.0, 14.0), Vector3(4.0, 14.0, 4.0), Color(0.95, 0.5, 0.15), "metal", "slide_tower", 8.0, false)
 	var seg1 = t._yard_box(Vector3(80.0, 9.0, 14.0), Vector3(16.0, 0.4, 3.6), Color(0.2, 0.7, 1.0), "water", Basis(Vector3.BACK, deg_to_rad(-24.0)))
 	t._yard_box(Vector3(92.0, 3.2, 12.0), Vector3(14.0, 0.4, 3.6), Color(0.1, 0.85, 0.7), "water", Basis(Vector3.UP, deg_to_rad(18.0)) * Basis(Vector3.BACK, deg_to_rad(-16.0)))
 	t._bonus(seg1, "rs_slide", "Waterslide", 400)
@@ -393,5 +393,5 @@ static func resort(t) -> void:
 		t._wood_house(int((104.0 + float(i) * 6.0) / 1.5), int(-36.0 / 1.5), 2, 2, 1, "cabana_%d" % i)
 	for sz in [-14.0, 14.0]:
 		var shop_h: float = 7.0
-		t._yard_box(Vector3(32.0, shop_h * 0.5, sz + (3.5 if sz < 0.0 else -3.5)), Vector3(16.0, shop_h, 7.0), Color(0.55, 0.85, 0.9) if sz < 0.0 else Color(0.95, 0.8, 0.5), "masonry")
+		t.shell_box(Vector3(32.0, shop_h * 0.5, sz + (3.5 if sz < 0.0 else -3.5)), Vector3(16.0, shop_h, 7.0), Color(0.55, 0.85, 0.9) if sz < 0.0 else Color(0.95, 0.8, 0.5), "masonry", "shop_%d" % int(sz), 6.0)
 		t._glass_wall(Vector3(32.0, 0.0, sz + (-0.1 if sz < 0.0 else 0.1)), Vector3.RIGHT, Vector3(0, 0, 1 if sz < 0.0 else -1), 16.0, 6.0, 4.0, 3.0)
