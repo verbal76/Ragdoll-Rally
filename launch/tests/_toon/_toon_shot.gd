@@ -30,7 +30,7 @@ func _r():
 	var qm := QuadMesh.new()
 	qm.size = Vector2(2, 2)
 	var mat := ShaderMaterial.new()
-	mat.shader = load("res://tests/_toon/ink_post.gdshader")
+	mat.shader = load("res://tests/_toon/" + (OS.get_environment("SHADER") if OS.get_environment("SHADER") != "" else "ink_post") + ".gdshader")
 	var pc: Array = pal[theme]
 	mat.set_shader_parameter("c_dark", pc[0])
 	mat.set_shader_parameter("c_mid", pc[1])
