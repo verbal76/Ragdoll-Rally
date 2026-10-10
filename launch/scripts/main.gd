@@ -6,6 +6,8 @@ const Rules := preload("res://scripts/rules.gd")
 const Destruction := preload("res://scripts/destruction.gd")
 const CamSafe := preload("res://scripts/cam_safe.gd")
 const Launchers := preload("res://scripts/launchers.gd")
+const Controls := preload("res://scripts/controls.gd")
+const ControlsPanel := preload("res://scripts/controls_panel.gd")
 const LauncherRig := preload("res://scripts/launcher_rig.gd")
 const Fx := preload("res://scripts/fx.gd")
 const SelectUI := preload("res://scripts/select_ui.gd")
@@ -75,6 +77,12 @@ var ricochets: int = 0
 var limbs_lost: int = 0
 var fires_started: int = 0
 var gore: bool = true
+var controls: Node = null                     # remappable input layer (controls.gd): keyboard + mouse + auto-detected gamepads
+var controls_panel: Control = null
+var _va_on := false                           # virtual aim (keys / stick) is driving the arc aim
+var _va_p := Vector2(0.0, 0.5)                # virtual pull (side, back) in the same units as the drag aim
+var _toast: Label = null
+var _toast_t: float = 0.0
 var ink_on: bool = true                       # comic-ink post-process (assets/fx/ink_post.gdshader); toggle: INK button
 var _ink_quad: MeshInstance3D = null
 var btn_ink: Button
@@ -180,6 +188,9 @@ func _ready() -> void:
 	# developer tools exist only when explicitly requested on the command line / environment; players never see them
 	dev_tools = OS.get_cmdline_user_args().has("--dev-economy") or OS.get_environment("RR_DEV_ECONOMY") == "1"
 	levels = Rules.empty_levels()
+	controls = Controls.new()
+	controls.name = "Controls"
+	add_child(controls)
 	_load_best()
 	_setup_environment()
 	sfx = Sfx.new()
@@ -520,6 +531,7 @@ func _setup_ui() -> void:
 	btn_ink.offset_bottom = 206
 	btn_ink.pressed.connect(func(): set_ink(not ink_on))
 	ui.add_child(btn_ink)
+	_build_controls_ui()
 	var btn_aim_l := Button.new()                  # in-aim launcher switch, top-left under the HUD line
 	btn_aim_l.text = "LAUNCHER"
 	btn_aim_l.focus_mode = Control.FOCUS_NONE
@@ -532,6 +544,38 @@ func _setup_ui() -> void:
 	btn_aim_l.offset_bottom = 134
 	btn_aim_l.pressed.connect(open_launchers)
 	ui.add_child(btn_aim_l)
+
+## Controls panel, CONTROLS button (desktop only) and the controller-connected toast.
+func _build_controls_ui() -> void:
+	controls_panel = ControlsPanel.new()
+	controls_panel.setup(controls)
+	controls_panel.quit_requested.connect(func(): get_tree().quit())
+	controls_panel.closed.connect(func(): lbl_hint.text = _hint_text())
+	ui.add_child(controls_panel)
+	if not OS.has_feature("mobile"):
+		var bc := Button.new()
+		bc.text = "CONTROLS"
+		bc.focus_mode = Control.FOCUS_NONE
+		bc.add_theme_font_size_override("font_size", 24)
+		bc.custom_minimum_size = Vector2(190, 64)
+		bc.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+		bc.offset_left = 16
+		bc.offset_top = 212
+		bc.offset_right = 206
+		bc.offset_bottom = 276
+		bc.pressed.connect(controls_panel.open)
+		ui.add_child(bc)
+	_toast = _label(28, HORIZONTAL_ALIGNMENT_CENTER)
+	ui.add_child(_toast)
+	_toast.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	_toast.offset_top = 70
+	_toast.offset_bottom = 120
+	_toast.offset_left = -400
+	_toast.offset_right = 400
+	_toast.visible = false
+	controls.pad_connected.connect(func(n, c):
+		_show_toast(("Controller connected: " if c else "Controller disconnected: ") + n)
+		lbl_hint.text = _hint_text() if state == State.AIM else lbl_hint.text)
 
 func _build_upgrade_panel() -> void:
 	upgrade_panel = Control.new()
@@ -798,6 +842,7 @@ func _on_again() -> void:
 	reset()
 
 func reset() -> void:
+	_va_on = false
 	Engine.time_scale = 1.0
 	slowmo = Rules.slowmo_new()
 	if is_instance_valid(ragdoll):
@@ -983,13 +1028,25 @@ func _apply_launcher() -> void:
 	lbl_hint.text = _hint_text()
 
 func _hint_text() -> String:
+	var desk: bool = controls != null and not OS.has_feature("mobile")
+	var pad: bool = desk and controls.last_device == "pad" and controls.has_pad()
 	match str(L["mode"]):
 		"direct":
+			if desk:
+				return "AIM: STICK / DRAG    FIRE: %s" % controls.prompt("fire")
 			return "DRAG TO AIM, RELEASE TO FIRE"
 		"charge":
+			if desk:
+				return "AIM: STICK / DRAG    HOLD %s TO CHARGE" % controls.prompt("fire")
 			return "DRAG TO AIM, RELEASE TO CHARGE"
 		"topdown":
+			if desk:
+				return "MOVE BULLSEYE: STICK / CLICK    FIRE: %s" % controls.prompt("fire")
 			return "TOUCH THE MAP: BULLSEYE, THEN FIRE"
+	if desk:
+		if pad:
+			return "STICK: PULL BACK + AIM    FIRE: %s" % controls.prompt("fire")
+		return "DRAG BACK + RELEASE, OR WASD + %s" % controls.prompt("fire")
 	return "DRAG BACK, AIM, RELEASE!" if attempt <= 1 else "AGAIN! Drag back and let go."
 
 func _update_launcher_ui() -> void:
@@ -1138,10 +1195,162 @@ func _tick_aim(dt: float) -> void:
 			fire()
 
 # ---------------------------------------------------------------- input
+## The aim/drag button: the touch (emulated left click) or whatever the player bound to "aim_drag".
+func _is_aim_button(event: InputEvent) -> bool:
+	if not (event is InputEventMouseButton):
+		return false
+	if event.device == InputEvent.DEVICE_ID_EMULATION:
+		return event.button_index == MOUSE_BUTTON_LEFT
+	return event.is_action("aim_drag") or (controls == null and event.button_index == MOUSE_BUTTON_LEFT)
+
+func _any_panel_open() -> bool:
+	return (controls_panel != null and controls_panel.visible) or (launcher_panel != null and launcher_panel.visible) or (upgrade_panel != null and upgrade_panel.visible)
+
+## Keyboard / gamepad actions (remappable, see controls.gd).
+func _handle_actions(event: InputEvent) -> bool:
+	if controls == null or controls.is_listening():
+		return false
+	if event is InputEventMouseMotion or not event.is_pressed() or event.is_echo():
+		return false
+	if event.is_action("pause"):
+		if controls_panel.visible:
+			controls_panel.close()
+		elif launcher_panel.visible:
+			launcher_panel.visible = false
+		elif upgrade_panel.visible:
+			upgrade_panel.visible = false
+		elif state != State.SELECT:
+			controls_panel.open()
+		return true
+	if controls_panel.visible:
+		return false
+	if event.is_action("fullscreen"):
+		_toggle_fullscreen()
+		return true
+	if event.is_action("toggle_ink"):
+		set_ink(not ink_on)
+		return true
+	if state == State.SELECT:
+		if event.is_action("ui_left") or event.is_action("aim_left"):
+			if select_ui.page == 0:
+				select_ui._step_char(-1)
+			else:
+				select_ui._step_env(-1)
+		elif event.is_action("ui_right") or event.is_action("aim_right"):
+			if select_ui.page == 0:
+				select_ui._step_char(1)
+			else:
+				select_ui._step_env(1)
+		elif event.is_action("ui_accept") or event.is_action("fire"):
+			if select_ui.page == 0:
+				select_ui._show_page(1)
+			else:
+				select_ui._on_go()
+		elif event.is_action("ui_cancel") and select_ui.page == 1:
+			select_ui._show_page(0)
+		else:
+			return false
+		return true
+	if launcher_panel.visible or upgrade_panel.visible:
+		return false
+	if event.is_action("open_launchers"):
+		open_launchers()
+	elif event.is_action("open_upgrades"):
+		open_upgrades()
+	elif event.is_action("retry"):
+		reset()
+	elif event.is_action("launcher_prev") and state == State.AIM:
+		_cycle_launcher(-1)
+	elif event.is_action("launcher_next") and state == State.AIM:
+		_cycle_launcher(1)
+	elif event.is_action("fire"):
+		if state == State.RESULT:
+			reset()
+		elif state == State.AIM:
+			_va_fire()
+	else:
+		return false
+	return true
+
+func _cycle_launcher(d: int) -> void:
+	var owned: Array = []
+	for r in Launchers.ROSTER:
+		if int(launcher_levels.get(str(r["id"]), 0)) > 0:
+			owned.append(str(r["id"]))
+	if owned.size() < 2:
+		return
+	var i: int = owned.find(launcher_id)
+	select_launcher(owned[posmod(i + d, owned.size())])
+	_show_toast("%s Lv%d" % [str(L["name"]), int(L["level"])])
+
+## Fire from the keyboard / pad: same result as releasing a drag for the current launcher.
+func _va_fire() -> void:
+	if _charging or _windup >= 0.0:
+		return
+	match str(L["mode"]):
+		"direct", "topdown":
+			if str(L["mode"]) == "topdown" and not bullseye_valid:
+				return
+			fire()
+		"charge":
+			_charging = true
+			_charge = 0.0
+		_:
+			if aim_power >= MIN_POWER:
+				fire()
+
+func _toggle_fullscreen() -> void:
+	var m: int = DisplayServer.window_get_mode()
+	var full: bool = m == DisplayServer.WINDOW_MODE_FULLSCREEN or m == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if full else DisplayServer.WINDOW_MODE_FULLSCREEN)
+
+func _show_toast(t: String) -> void:
+	if _toast == null:
+		return
+	_toast.text = t
+	_toast.visible = true
+	_toast_t = 2.2
+
+## Stick / key aiming. Runs every frame; it only acts while the player is not mid mouse-drag.
+func _pad_input(dt: float) -> void:
+	if controls == null or _any_panel_open() or state == State.SELECT:
+		return
+	if state == State.FLIGHT:
+		if not _air_drag:
+			air_input = Input.get_axis("spin_left", "spin_right")
+		return
+	if state != State.AIM or dragging or _charging or _windup >= 0.0:
+		return
+	var v: Vector2 = controls.aim_vector()
+	if v.length() < 0.001:
+		return
+	match str(L["mode"]):
+		"direct", "charge":
+			_va_on = true
+			_direct_move(v.x * 420.0 * dt, v.y * 420.0 * dt)
+		"topdown":
+			_va_on = true
+			bullseye.x = clampf(bullseye.x + v.x * 70.0 * dt, 0.0, 330.0)
+			bullseye.z = clampf(bullseye.z + v.y * 70.0 * dt, -120.0, 120.0)
+			bullseye.y = town.ground_y(bullseye.x, bullseye.z) if is_instance_valid(town) else 0.0
+			_validate_bullseye()
+		_:
+			if not _va_on:
+				_va_on = true
+				_va_p = Vector2(0.0, maxf(aim_power, 0.5))
+			_va_p.x = clampf(_va_p.x + v.x * 0.9 * dt, -1.0, 1.0)
+			_va_p.y = clampf(_va_p.y + v.y * 0.9 * dt, 0.0, OVERDRIVE_MAX)
+			_apply_pull(_va_p)
+
 func _unhandled_input(event: InputEvent) -> void:
+	if _handle_actions(event):
+		get_viewport().set_input_as_handled()
+		return
 	if state == State.SELECT:
 		return
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+	if _any_panel_open():
+		return
+	if _is_aim_button(event):
 		if event.pressed:
 			if state == State.FLIGHT:
 				_air_drag = true               # drag left/right while airborne = extra flip / spin
@@ -1183,7 +1392,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		if dragging and state == State.AIM:
 			var md2: String = str(L["mode"])
 			if md2 == "direct" or md2 == "charge":
-				_direct_move(event.relative.x, event.relative.y)
+				var ms: float = float(controls.settings["mouse_sensitivity"]) if controls else 1.0
+				_direct_move(event.relative.x * ms, event.relative.y * ms)
 			elif md2 == "topdown":
 				_set_bullseye(event.position)
 			else:
@@ -1200,7 +1410,10 @@ func _update_aim() -> void:
 	if absf(det) > 0.05:
 		b = (drag_vec.x * _basis_side.y - drag_vec.y * _basis_side.x) / det
 		sd = (_basis_back.x * drag_vec.y - _basis_back.y * drag_vec.x) / det
-	var p := Vector2(sd, b) / AIM_MAX_PX
+	_apply_pull(Vector2(sd, b) / AIM_MAX_PX)
+
+## Aim from a pull vector p = (side, back) in 0..1 units (mouse drag, finger drag, keys or stick all end up here).
+func _apply_pull(p: Vector2) -> void:
 	if p.length() > OVERDRIVE_MAX:
 		p = p.normalized() * OVERDRIVE_MAX
 	aim_power = p.length()                                # 0..1 = the old power range, 1..1.45 = overdrive
@@ -2088,6 +2301,11 @@ func _finish() -> void:
 	print("[launch] result total=%d avg=%.1fms worst=%.1fms" % [total, avg * 1000.0, frame_worst * 1000.0])
 
 func _process(dt: float) -> void:
+	_pad_input(dt)
+	if _toast != null and _toast_t > 0.0:
+		_toast_t -= dt
+		if _toast_t <= 0.0:
+			_toast.visible = false
 	if state == State.FLIGHT:
 		frame_sum += dt
 		frame_n += 1
