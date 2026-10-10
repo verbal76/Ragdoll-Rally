@@ -833,7 +833,7 @@ func _process_hazards(dt: float) -> void:
 			if not bool(h["armed"]):
 				continue
 			for p in released_order:
-				if is_instance_valid(p) and not p.freeze and p.linear_velocity.length() > 20.0 and not (h["shells"] as Array).has(p.get_meta("shell_of", null)):
+				if is_instance_valid(p) and not p.freeze and p.linear_velocity.length() > 20.0 and not (p.has_meta("shell_of") and (h["shells"] as Array).has(p.get_meta("shell_of"))):
 					if p.global_position.distance_to(h["pos"]) < float(h["size"]):
 						trigger_hazard(h, 0.0)
 						break
