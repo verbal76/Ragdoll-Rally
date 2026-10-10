@@ -1,0 +1,26 @@
+[gd_scene load_steps=4 format=3 uid="uid://crb7b2ap5nl0i"]
+
+[ext_resource type="Shader" uid="uid://dx4pcaue3d7yi" path="res://Shaders/ToonFire.gdshader" id="1_wdjje"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_reidl"]
+render_priority = 0
+shader = ExtResource("1_wdjje")
+shader_parameter/top_radius = 0.05
+shader_parameter/bottom_radius = 0.07
+shader_parameter/center_radius = 0.75
+shader_parameter/center_position = 0.3
+shader_parameter/cylinder_height = 3.5
+shader_parameter/bottom_curve = 0.4
+shader_parameter/_vibrate_amplitude = 0.0
+shader_parameter/_vibrate_frequency = 150.0
+shader_parameter/_speed = 2.0
+shader_parameter/_scale = 2.0
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_eb0ll"]
+rings = 48
+cap_top = false
+
+[node name="3DFire" type="MeshInstance3D"]
+transform = Transform3D(-2.18557e-08, 0, 0.5, 0, 0.5, 0, -0.5, 0, -2.18557e-08, 0, 0, 0)
+material_override = SubResource("ShaderMaterial_reidl")
+mesh = SubResource("CylinderMesh_eb0ll")

@@ -15,3 +15,7 @@ What survives is only the textual record in `docs/PRODUCT_HISTORY.md` and `docs/
 
 What is needed to unblock Original (owner action): the original CodePen URL/export, any Capacitor project folder, a historical APK, or the 2025-09-01/02 source pasted into the repository. With real source in hand, modernization can proceed as specified (keep Matter.js, Capacitor, API 36, distinct package `com.hotatticgames.ragdollrally.original`, separate workflow).
 Rule kept: no Original gameplay is reconstructed from memory or invented without explicit owner authorization.
+
+
+## Decision (2026-10-04)
+The proposed separate "Legacy" application is CANCELLED by the owner. The original Matter.js source was never recoverable and no stand-in will be presented as the original. The unfinished Legacy icon scaffolding was removed. There is one product: RAGDOLL RALLY LAUNCH.

@@ -21,8 +21,24 @@ The owner must never have to decipher branch names, SHAs, build numbers or coden
 
 Full history and the old-name -> v-number map: `docs/RELEASES.md`.
 
+## Studio splash (MANDATORY, studio-wide)
+Every Hot Attic Games app/game must open with the **Hot Attic Games studio splash** before its own title/menu/onboarding, on cold launch only.
+- The ONLY canonical artwork is **`Hot_Attic_Games_Master_Logo_ALPHA_FINAL.png`** (owner-supplied; on `main` at the repo root; shipped unmodified at `launch/branding/`). Never wait for, look for, or recreate any other logo file name. `Hot_Attic_Games_Master_Logo.png` is obsolete.
+- Never redraw, recreate, crop, stretch, recolour or substitute it. Keep its transparency and aspect ratio; fit the whole artwork in the safe area. ~2.4 s with fade in/out, no extra text or effects.
+- Already implemented in `launch/scripts/boot.gd` (do not build a second splash). Details, tests and behaviour: `docs/STUDIO_SPLASH.md`; guarded by `launch/tests/verify_splash.gd`, which pins the file's SHA-256.
+- Order: native splash (dark, no image) -> studio card -> (staged OTA behind its modal) -> the game's own opening. Never replay on background/resume.
+
 ## Other standing rules
 - Keep the Android package id and signing key unchanged (`com.hotatticgames.ragdollrally.launch`, committed throwaway debug keystore) so every build installs over the last.
 - Never commit private signing material. No Play upload.
 - Do not invent a separate "Legacy" game. There is one product.
 - Commit and push work; open a draft PR for pushed branches.
+
+## GitHub Actions budget policy (STANDING OWNER DIRECTIVE)
+GitHub-hosted Actions minutes are shared across the owner's projects and deliberately scarce. Before starting any workflow ask: "Does this need GitHub Actions, or can I prove it locally?"
+- Validate locally first: `tools/local_validate.sh [fast|full]` runs the same Godot test suites CI runs (set `GODOT=` to the 4.7.1 binary). Debug and iterate locally, never by repeated CI runs.
+- Routine pushes cost zero minutes. `android.yml` (the APK build) triggers ONLY on a push that changes `release/release.json`, and then builds only if that file says `"deliver": true`; or by manual `workflow_dispatch` when an internal test APK is genuinely needed for physical testing. Docs/research/bookkeeping changes never run it.
+- Do not rebuild the same SHA, re-run to see whether a flaky test passes, build platforms nobody asked for (no Windows EXEs unless requested), or build an APK for an OTA-only change.
+- Actions ARE appropriate for: the final validation + build of a candidate that is really being delivered; OTA publication with its safety/compat/signing checks; a platform-specific check that cannot be reproduced locally.
+- Release safety is never traded for minutes: signing verification, runtime/OTA compatibility, `verify_apk.py`, APK content inspection and rollback protections stay mandatory for delivery builds.
+- Workflows use concurrency groups; `launch-ota.yml` is manual/request-file only; `release-retrofit.yml` is manual only.

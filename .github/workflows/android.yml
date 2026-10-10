@@ -2,14 +2,20 @@ name: Android Launch POC
 
 # Native generation G2: Godot 4.7.1, Gradle build route, targetSdk 36.
 # (The G1 line, Godot 4.4.1 / API 34, lives on branch ccr-7c0d7291-e3d5o1 with releases launch-poc-b2..b6.)
+# GitHub Actions budget policy (see CLAUDE.md): this workflow builds an APK, so it must NOT run on routine pushes.
+# It runs only when (a) release/release.json is pushed (a delivery decision) - and then only if that file says "deliver": true -
+# or (b) someone starts it by hand (workflow_dispatch) to get an internal test APK for physical testing.
+# Everything else (tests, content checks, docs) is proven locally first: tools/local_validate.sh.
 on:
   push:
-    branches: [claude/launch-api36-modernization, claude/launch-expanded-playfield, claude/launch-mayhem-upgrades]
+    branches: [claude/launch-gameplay-pivot]
     paths:
-      - 'launch/**'
-      - 'release/**'
-      - '.github/workflows/android.yml'
+      - 'release/release.json'
   workflow_dispatch:
+
+concurrency:
+  group: android-launch-${{ github.ref }}
+  cancel-in-progress: false      # never kill a run that may be mid-publish; a newer queued run replaces older queued ones
 
 permissions:
   contents: write
@@ -20,7 +26,24 @@ env:
   SIGNING_CERT_SHA256: 32a3988d6348d9eedcc95b40202d5f35e3b0a4d96ac042319de0f7ca7e3dc15b
 
 jobs:
+  gate:
+    # ~10 s: decides whether the expensive build is warranted. A push that only touched release.json with deliver=false does nothing.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.g.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: release
+      - id: g
+        run: |
+          D=$(python3 -c "import json;print(str(json.load(open('release/release.json')).get('deliver', False)).lower())")
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$D" = "true" ]; then echo "build=true" >> "$GITHUB_OUTPUT"; else echo "build=false" >> "$GITHUB_OUTPUT"; echo "deliver=false on a push: no build (budget policy)"; fi
+
   build:
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -143,8 +166,29 @@ jobs:
       - name: Verify (OTA / About / applying-update state machine)
         run: godot --headless --path launch -s tests/verify_ota.gd
 
-      - name: Verify (expanded playfield, aim mapping, targets, camera, reset)
+      - name: Verify (Hot Attic Games studio splash - canonical asset, order, timing, fit, transparency, resume, failure)
+        run: godot --headless --path launch -s tests/verify_splash.gd
+
+      - name: Verify (gameplay pivot - characters, upgrades, skipping, ricochet, limbs, fire, explosions, selector)
+        run: godot --headless --path launch -s tests/verify_pivot.gd
+
+      - name: Verify (b9 city map - aim mapping, targets, camera, reset)
         run: godot --headless --path launch -s tests/verify_expanded.gd
+
+      - name: Verify (v13 - trajectory governor, boundary, economy score-vs-bank, skips, upgrades, characters, no test cheat)
+        run: godot --headless --path launch -s tests/verify_v13.gd
+
+      - name: Verify (v13 city quality gate - 7 cities, automated throws, reachability, clearance, determinism)
+        run: godot --headless --path launch -s tests/verify_cities.gd
+
+      - name: Verify (v14 hillside cities - terrain, generator seeds, reachability, determinism)
+        run: godot --headless --path launch -s tests/verify_hills.gd
+
+      - name: Verify (v15 mayhem - 20 levels, impact energy, shells, camera, blood, slow motion, envelope audit, Lv20 stress)
+        run: |
+          godot --headless --path launch -s tests/verify_mayhem.gd
+          godot --headless --path launch -s tests/verify_envelope.gd
+          godot --headless --path launch -s tests/verify_stress.gd
 
       - name: Physics regression vs Godot 4.4.1 reference
         run: |
@@ -164,6 +208,7 @@ jobs:
 
       - name: Verify APK artifact (identity, SDK, signing, native libs, 16 KB)
         run: |
+          set -o pipefail
           python3 launch/tools/verify_apk.py "${{ steps.export.outputs.apk }}" \
             --package com.hotatticgames.ragdollrally.launch --version-name "${{ steps.rel.outputs.vname }}" \
             --version-code ${{ github.run_number }} --min-sdk 24 --target-sdk 36 \
@@ -175,6 +220,12 @@ jobs:
           assert r["abis"] == ["arm64-v8a"], r["abis"]
           PY
 
+      - name: Inspect APK content (cities, studio logo, no test cheat, governor/boundary code, icon)
+        run: |
+          set -o pipefail
+          pip install -q zstandard
+          python3 launch/tools/inspect_apk_content.py "${{ steps.export.outputs.apk }}" --json-out build/apk_content.json | tee build/apk_content.txt
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.export.outputs.name }}
@@ -185,7 +236,7 @@ jobs:
       - name: Release notes + checksum (delivered builds only)
         if: steps.rel.outputs.deliver == 'true'
         run: |
-          python3 release/make_notes.py "${{ steps.export.outputs.apk }}" build/release_notes.md "$GITHUB_SHA" "${{ github.run_number }}" "Godot 4.7.1" 36
+          python3 release/make_notes.py "${{ steps.export.outputs.apk }}" build/release_notes.md "$GITHUB_SHA" "${{ github.run_number }}" "${{ github.run_number }}" "Godot 4.7.1" 36
           (cd build && sha256sum "${{ steps.export.outputs.name }}" > "${{ steps.export.outputs.name }}.sha256")
           cp build/apk_report.json "build/${{ steps.rel.outputs.stem }}-v${{ steps.rel.outputs.version }}-build-report.json"
           cat build/release_notes.md

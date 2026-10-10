@@ -2,11 +2,9 @@ name: Release retrofit (one-off)
 
 # Runs when release/retrofit_request.json changes. Idempotent. Re-presents already-built, verified binaries under the
 # public "<Product> v<N>" convention WITHOUT rebuilding them (see docs/RELEASES.md).
+# Budget policy: the retrofit is finished history, so it no longer runs on pushes - manual only.
 on:
-  push:
-    paths:
-      - 'release/retrofit_request.json'
-      - 'release/retrofit.py'
+  workflow_dispatch:
 
 permissions:
   contents: write

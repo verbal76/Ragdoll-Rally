@@ -21,6 +21,8 @@ func _init() -> void:
 		if n.begins_with("physics/"):
 			result["settings"][n] = str(ProjectSettings.get_setting(n))
 	var main: Node = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	main.skip_select = true
+	main.env_idx = main.Rules.env_index("city")   # the big city map (these tests are about it)
 	root.add_child(main)
 	main.classic = true          # G1/G2 speeds/materials/no skid so the 4.4.1 comparison stays meaningful
 	main.legacy_world = true     # original small village: comparable with the 4.4.1 reference
