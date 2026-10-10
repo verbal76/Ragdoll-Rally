@@ -75,6 +75,9 @@ var ricochets: int = 0
 var limbs_lost: int = 0
 var fires_started: int = 0
 var gore: bool = true
+var ink_on: bool = true                       # comic-ink post-process (assets/fx/ink_post.gdshader); toggle: INK button
+var _ink_quad: MeshInstance3D = null
+var btn_ink: Button
 var skip_select: bool = false          # tests: go straight to AIM
 var air_input: float = 0.0             # -1..1 left/right swipe while airborne = extra rotation
 var _air_start: Vector2 = Vector2.ZERO
@@ -268,6 +271,7 @@ func _setup_camera() -> void:
 	cam.far = 500.0
 	add_child(cam)
 	cam.current = true
+	_setup_ink()
 	_compute_aim_camera()
 	cam.global_transform = _cam_aim_xf
 	_noise.frequency = 2.0
@@ -504,6 +508,18 @@ func _setup_ui() -> void:
 	btn_fire.visible = false
 	btn_fire.pressed.connect(fire)
 	ui.add_child(btn_fire)
+	btn_ink = Button.new()                         # comic-ink look on/off, under the LAUNCHER button
+	btn_ink.text = "INK: ON" if ink_on else "INK: OFF"
+	btn_ink.focus_mode = Control.FOCUS_NONE
+	btn_ink.add_theme_font_size_override("font_size", 24)
+	btn_ink.custom_minimum_size = Vector2(190, 64)
+	btn_ink.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	btn_ink.offset_left = 16
+	btn_ink.offset_top = 142
+	btn_ink.offset_right = 206
+	btn_ink.offset_bottom = 206
+	btn_ink.pressed.connect(func(): set_ink(not ink_on))
+	ui.add_child(btn_ink)
 	var btn_aim_l := Button.new()                  # in-aim launcher switch, top-left under the HUD line
 	btn_aim_l.text = "LAUNCHER"
 	btn_aim_l.focus_mode = Control.FOCUS_NONE
@@ -2191,6 +2207,7 @@ func _load_best() -> void:
 		char_idx = int(cf.get_value("choice", "char", 0))
 		env_idx = Rules.env_index(str(cf.get_value("choice", "env_id", "hill_steep")))
 		gore = bool(cf.get_value("settings", "gore", true))
+		ink_on = bool(cf.get_value("settings", "ink", true))
 
 func _save_progress() -> void:
 	var cf := ConfigFile.new()
@@ -2209,6 +2226,36 @@ func _save_choice() -> void:
 	cf.load("user://launch.cfg")
 	cf.set_value("choice", "char", char_idx)
 	cf.set_value("choice", "env_id", str(Rules.ENVIRONMENTS[env_idx]["id"]))
+	cf.save("user://launch.cfg")
+
+## Comic-ink look: a full-screen pass drawn by a quad on the camera (GL Compatibility: reads the screen and depth textures).
+## Every surface keeps its own colour (cel-banded), the sky is untouched; black ink lines at depth / brightness edges, halftone shadows.
+func _setup_ink() -> void:
+	if _ink_quad != null or DisplayServer.get_name() == "headless":
+		return
+	var qm := QuadMesh.new()
+	qm.size = Vector2(2, 2)
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://assets/fx/ink_post.gdshader")
+	mat.render_priority = 127
+	qm.material = mat
+	_ink_quad = MeshInstance3D.new()
+	_ink_quad.mesh = qm
+	_ink_quad.extra_cull_margin = 16384.0
+	_ink_quad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_ink_quad.position = Vector3(0, 0, -1)
+	_ink_quad.visible = ink_on
+	cam.add_child(_ink_quad)
+
+func set_ink(on: bool) -> void:
+	ink_on = on
+	if _ink_quad:
+		_ink_quad.visible = on
+	if btn_ink:
+		btn_ink.text = "INK: %s" % ("ON" if on else "OFF")
+	var cf := ConfigFile.new()
+	cf.load("user://launch.cfg")
+	cf.set_value("settings", "ink", on)
 	cf.save("user://launch.cfg")
 
 func set_gore(on: bool) -> void:
