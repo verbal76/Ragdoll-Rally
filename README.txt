@@ -1,2 +1,2 @@
-Windows internal test build (v17 + controller fix, not a numbered release). Extract, run Ragdoll-Rally-Launch.exe.
-sha256 9e41f1e203770146afe6344d3129c333d2caf49d9d5d2019929c0049b5c2c908
+Ragdoll Rally Launch v18 - Windows (x86_64). Extract, run Ragdoll-Rally-Launch.exe.
+sha256 1c17a320b63e3b52a856915f15b0451f9e09c86acb3646d6b4bb615a8813446d
