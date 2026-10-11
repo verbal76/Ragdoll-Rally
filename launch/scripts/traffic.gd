@@ -43,8 +43,8 @@ func populate(t: Node, n_cars: int, n_peds: int) -> void:
 	while cars.size() < n_cars and tries < 600:
 		tries += 1
 		var p := Vector3(rng.randf_range(14.0, 300.0), 0.0, rng.randf_range(-110.0, 110.0))
-		if absf(p.z) < 10.0 and p.x < 40.0:
-			continue                                    # keep the launch corridor clear
+		if absf(p.z) < 22.0:
+			continue                                    # the flight corridor stays clear (camera line of sight)
 		if _free(p, Vector3(5.2, 2.4, 3.0), rng.randi() % 2 == 0):
 			_make_car(p, rng)
 	tries = 0
@@ -273,9 +273,9 @@ func _physics_process(dt: float) -> void:
 			np.y = _ground(np.x, np.z)
 			root.position = np
 			root.rotation.y = atan2(dir.x, dir.z)
-	# driving cars keep rolling until something stops them
+	# driving cars roll during a run (while the projectile is in flight) until something stops them
 	for c in cars:
-		if not c["driving"] or c["wrecked"]:
+		if rb == null or not c["driving"] or c["wrecked"]:
 			continue
 		var b: RigidBody3D = c["body"]
 		if not is_instance_valid(b) or not b.visible:
