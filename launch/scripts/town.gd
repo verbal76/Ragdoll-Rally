@@ -1020,7 +1020,8 @@ func reset_in_place() -> void:
 		b.freeze = false
 		b.linear_velocity = Vector3.ZERO
 		b.angular_velocity = Vector3.ZERO
-		b.global_transform = Transform3D(Basis.IDENTITY, b.get_meta("rest"))
+		b.global_transform = Transform3D(b.get_meta("rest_basis", Basis.IDENTITY), b.get_meta("rest"))
+		b.remove_meta("last_p")
 	for b in props:                     # second pass: moving neighbours would wake sleepers
 		b.sleeping = true
 	released_order.clear()

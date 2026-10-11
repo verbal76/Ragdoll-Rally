@@ -9,6 +9,7 @@ const Launchers := preload("res://scripts/launchers.gd")
 const Controls := preload("res://scripts/controls.gd")
 const ControlsPanel := preload("res://scripts/controls_panel.gd")
 const Graphics := preload("res://scripts/graphics.gd")
+const Traffic := preload("res://scripts/traffic.gd")
 const GraphicsPanel := preload("res://scripts/graphics_panel.gd")
 const LauncherRig := preload("res://scripts/launcher_rig.gd")
 const Fx := preload("res://scripts/fx.gd")
@@ -82,6 +83,7 @@ var gore: bool = true
 var controls: Node = null                     # remappable input layer (controls.gd): keyboard + mouse + auto-detected gamepads
 var controls_panel: Control = null
 var gfx: Node = null
+var traffic: Node = null
 var graphics_panel: Control = null
 var btn_controls: Button
 var btn_gfx: Button
@@ -208,6 +210,11 @@ func _ready() -> void:
 		gfx.name = "Graphics"
 		add_child(gfx)
 		gfx.setup.call_deferred(self)
+	traffic = Traffic.new()
+	traffic.name = "Traffic"
+	add_child(traffic)
+	traffic.ped_killed.connect(_on_ped_killed)
+	traffic.ragdoll_fn = func(): return ragdoll.torso if (state == State.FLIGHT and is_instance_valid(ragdoll)) else null
 	_load_best()
 	_setup_environment()
 	sfx = Sfx.new()
@@ -624,6 +631,7 @@ func _fit_modal(panel: Control) -> void:
 				sc.add_child(vb)
 
 var _ui_theme: Theme
+var rebuilt_town := false
 var _was_modal := false
 var _hud_hide: Array = []
 var lbl_legend: Label
@@ -1038,6 +1046,7 @@ func reset() -> void:
 			remove_child(town)
 			town.queue_free()
 		launch_origin = LAUNCH_HOME
+		rebuilt_town = true
 		town = Town.new()
 		town.fx = fx
 		add_child(town)
@@ -1049,6 +1058,12 @@ func reset() -> void:
 	town.fx = fx
 	fx.gore = gore
 	_sync_launcher_nodes()
+	if not legacy_world and not classic:
+		if rebuilt_town:
+			traffic.populate(town, 14, 26)
+		else:
+			traffic.reset()
+	rebuilt_town = false
 	fx.clear_all()
 	_apply_theme(env_id)
 	scoring = Scoring.new()
@@ -2338,6 +2353,7 @@ func _apply_blast_result(res: Dictionary, key: String, origin: Vector3, radius: 
 		var c: Vector3 = blasts[bi]
 		_burst(c)
 		fx.explosion(c, radius if bi == 0 else radius * 0.7)
+		traffic.blast(c, radius if bi == 0 else radius * 0.7)
 	_flash(blasts[0])
 	var shake: float = clampf(0.55 + radius / 40.0, 0.6, 1.0)
 	trauma = maxf(trauma, shake)
@@ -2508,6 +2524,14 @@ func _on_awarded(label: String, pts: int, world_pos: Vector3) -> void:
 	tw.chain().tween_callback(func():
 		_popups = maxi(_popups - 1, 0)
 		l.queue_free())
+
+## A pedestrian was run down: blood, a mark on the ground and points.
+func _on_ped_killed(pos: Vector3, dir: Vector3, ped: Node3D) -> void:
+	fx.blood(pos, dir, 1.2)
+	fx.splat(Vector3(pos.x, town.ground_y(pos.x, pos.z) + 0.05, pos.z), Vector3.UP, 1.1)
+	scoring.award("ped_%d" % ped.get_instance_id(), "CIVILIAN", 40, "Carnage", pos)
+	sfx.play("pop", -2.0, randf_range(0.7, 0.95))
+	_last_event = flight_t
 
 func _burst(pos: Vector3) -> void:
 	var p: CPUParticles3D = _particles[_pi]
