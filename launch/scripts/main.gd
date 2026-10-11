@@ -90,6 +90,15 @@ var btn_gfx: Button
 var _last_pull := Vector2.ZERO
 var _place_mode := false                       # overhead map: tap the city to put the launcher there
 var btn_move: Button
+var _city_t: float = 0.0
+var _punched: int = 0                          # pieces broken by the current flight (energy fatigue)
+var city_wiped := false                        # the city was (nearly) completely demolished: the next onslaught gets a fresh one
+var lbl_city: Label
+var btn_exit: Button
+var btn_exit_r: Button
+var btn_city_r: Button
+var btn_city: Button
+var _exit_t: float = 0.0
 var _elev_bias: float = 0.0                    # degrees added to the pull-back elevation (arc launchers); -90..+90 total
 var launch_origin: Vector3 = LAUNCH_HOME       # current launcher position (muzzle / pouch rest point)
 var _va_on := false                           # virtual aim (keys / stick) is driving the arc aim
@@ -494,6 +503,21 @@ func _setup_ui() -> void:
 	row.add_child(btn_upgrades)
 	row.add_child(btn_launchers)
 	row.add_child(btn_change)
+	btn_city_r = Button.new()
+	btn_city_r.text = "RESET CITY"
+	btn_city_r.custom_minimum_size = Vector2(240, 84)
+	btn_city_r.add_theme_font_size_override("font_size", 30)
+	btn_city_r.focus_mode = Control.FOCUS_NONE
+	btn_city_r.pressed.connect(reset_city)
+	row.add_child(btn_city_r)
+	if not OS.has_feature("mobile"):
+		btn_exit_r = Button.new()
+		btn_exit_r.text = "EXIT"
+		btn_exit_r.custom_minimum_size = Vector2(240, 84)
+		btn_exit_r.add_theme_font_size_override("font_size", 30)
+		btn_exit_r.focus_mode = Control.FOCUS_NONE
+		btn_exit_r.pressed.connect(_exit_press)
+		row.add_child(btn_exit_r)
 	vb.add_child(row)
 	result_panel.visible = false
 	ui.add_child(result_panel)
@@ -661,6 +685,31 @@ func _modal_sync() -> void:
 		lbl_legend.visible = pad and menus
 		lbl_legend.text = "D-PAD: choose     A: select     B: back"
 
+func _hud_button(txt: String, top: float, cb: Callable) -> Button:
+	var b := Button.new()
+	b.text = txt
+	b.focus_mode = Control.FOCUS_NONE
+	b.add_theme_font_size_override("font_size", 24)
+	b.custom_minimum_size = Vector2(190, 64)
+	b.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	b.offset_left = 16
+	b.offset_top = top
+	b.offset_right = 206
+	b.offset_bottom = top + 64
+	b.pressed.connect(cb)
+	ui.add_child(b)
+	return b
+
+## EXIT asks twice (press again within 3 seconds) so it is never hit by accident.
+func _exit_press() -> void:
+	if _exit_t > 0.0:
+		get_tree().quit()
+		return
+	_exit_t = 3.0
+	for b in [btn_exit, btn_exit_r]:
+		if b:
+			b.text = "EXIT?  PRESS AGAIN"
+
 func _raise_panels() -> void:
 	if _ui_theme == null:
 		_build_theme()
@@ -668,7 +717,7 @@ func _raise_panels() -> void:
 		for c in ui.get_children():
 			if c is Control:
 				(c as Control).theme = _ui_theme
-	_hud_hide = [btn_ink, btn_move, btn_controls, btn_gfx, lbl_hint, lbl_stats, lbl_score, lbl_fps, btn_reset]
+	_hud_hide = [btn_ink, btn_move, btn_controls, btn_gfx, btn_city, btn_exit, lbl_city, lbl_hint, lbl_stats, lbl_score, lbl_fps, btn_reset]
 	for n in [launcher_panel, upgrade_panel, controls_panel, graphics_panel]:
 		_fit_modal(n)
 	for n in [lbl_legend, result_panel, launcher_panel, upgrade_panel, controls_panel, graphics_panel]:
@@ -745,6 +794,16 @@ func _build_controls_ui() -> void:
 	btn_move.offset_bottom = btn_move.offset_top + 64
 	btn_move.pressed.connect(func(): set_place_mode(not _place_mode))
 	ui.add_child(btn_move)
+	btn_city = _hud_button("RESET CITY", 422 if not OS.has_feature("mobile") else 282, reset_city)
+	if not OS.has_feature("mobile"):
+		btn_exit = _hud_button("EXIT", 492, _exit_press)
+	lbl_city = _label(20, HORIZONTAL_ALIGNMENT_CENTER)
+	ui.add_child(lbl_city)
+	lbl_city.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	lbl_city.offset_top = 80
+	lbl_city.offset_bottom = 108
+	lbl_city.offset_left = -200
+	lbl_city.offset_right = 200
 	_toast = _label(28, HORIZONTAL_ALIGNMENT_CENTER)
 	ui.add_child(_toast)
 	_toast.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
@@ -1024,9 +1083,22 @@ func _apply_safe_area() -> void:
 
 # ---------------------------------------------------------------- reset
 func _on_again() -> void:
-	reset()
+	_retry()
 
-func reset() -> void:
+## Another onslaught on the SAME city: the damage stays, the city only starts over when it is reset by hand or fully demolished.
+func _retry() -> void:
+	var fresh: bool = city_wiped or not persist_city
+	city_wiped = false
+	reset(not fresh)
+
+func reset_city() -> void:
+	city_wiped = false
+	reset(false)
+
+var persist_city := true
+
+func reset(keep_city: bool = false) -> void:
+	_punched = 0
 	_va_on = false
 	_place_mode = false
 	if btn_move:
@@ -1040,7 +1112,10 @@ func reset() -> void:
 	if not bool(Rules.ENVIRONMENTS[env_idx]["playable"]) and not legacy_world:
 		env_id = "yard"
 	if is_instance_valid(town) and town.legacy == legacy_world and town.env_id == env_id and not force_rebuild:
-		town.reset_in_place()          # fast path: no rebuild
+		if keep_city:
+			town.new_run_soft()        # the city keeps its damage
+		else:
+			town.reset_in_place()      # fast path: no rebuild
 	else:
 		if is_instance_valid(town):
 			remove_child(town)
@@ -1051,6 +1126,9 @@ func reset() -> void:
 		town.fx = fx
 		add_child(town)
 		town.build(legacy_world, env_id)
+		if not legacy_world and not classic:
+			town.sprawl()
+		town.finalize_city()
 		town.piece_released.connect(_on_piece_released)
 		town.hazard_blast.connect(_on_hazard_blast)
 		town.ignited.connect(_on_ignited)
@@ -1062,7 +1140,7 @@ func reset() -> void:
 		if rebuilt_town:
 			traffic.populate(town, 14, 26)
 		else:
-			traffic.reset()
+			traffic.reset(keep_city)
 	rebuilt_town = false
 	fx.clear_all()
 	_apply_theme(env_id)
@@ -1511,7 +1589,7 @@ func _handle_actions(event: InputEvent) -> bool:
 	elif event.is_action("open_upgrades"):
 		open_upgrades()
 	elif event.is_action("retry"):
-		reset()
+		_retry()
 	elif event.is_action("place_launcher") and state == State.AIM:
 		set_place_mode(not _place_mode)
 	elif event.is_action("launcher_prev") and state == State.AIM:
@@ -1522,7 +1600,7 @@ func _handle_actions(event: InputEvent) -> bool:
 		return false
 	elif event.is_action("fire"):
 		if state == State.RESULT:
-			reset()
+			_retry()
 		elif state == State.AIM:
 			_va_fire()
 	else:
@@ -1628,6 +1706,10 @@ func _place_at_screen(pos: Vector2) -> void:
 	move_launcher(p.x, p.z)
 
 ## Energy a hit needs to break a fixture that is static for the physics (everything that can be fired on gives way to a hard enough hit).
+## Every piece a single flight breaks takes some of its energy: a run still wrecks a lot, but no shot clears half a city.
+func _punch_fatigue() -> float:
+	return 1.0 / (1.0 + float(_punched) / 28.0)
+
 func _static_break_energy(mat: String) -> float:
 	match mat:
 		"canvas": return 8.0
@@ -1748,7 +1830,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				_air_start = event.position
 				return
 			if state == State.RESULT:
-				reset()   # tap anywhere = instant retry, and the same touch starts the next aim
+				_retry()   # tap anywhere = instant retry, and the same touch starts the next aim
 			if state == State.AIM and not _charging and _windup < 0.0:
 				dragging = true
 				drag_start = event.position
@@ -2032,7 +2114,7 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 		if _tramp_uses > 3:
 			mat = "ground"                      # springs wear out: no infinite bouncing
 	var sev: float = Rules.severity(speed)
-	var eff: float = Launchers.energy_speed(speed) * float(fxp["impact_power"]) * (0.55 if limb else 1.0)
+	var eff: float = Launchers.energy_speed(speed) * float(fxp["impact_power"]) * (0.55 if limb else 1.0) * _punch_fatigue()
 	var pass_through: bool = false
 	var keep: float = 0.85
 	var vdir: Vector3 = vin.normalized() if vin.length() > 0.1 else Vector3.RIGHT
@@ -2052,6 +2134,7 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 		var piece := other as RigidBody3D
 		var pr: Dictionary = Destruction.punch(town, piece, pos, vdir, eff * float(fxp["destruct_mult"]) * float(L["impact"]), town.smash_push)
 		var released: Array = (pr["released"] as Array) + (pr["dissolved"] as Array)
+		_punched += released.size()
 		if released.size() > 0:
 			var dmg: int = 0
 			var shells_hit := {}
@@ -2705,6 +2788,9 @@ func _finish() -> void:
 	if not classic:
 		lines.append("+%d CREDITS banked for upgrades (score and credits are separate)" % last_credit)
 		lines.append("Skips %d   Ricochets %d   Limbs lost %d   Fires %d   Best combo x%d" % [skips, ricochets, limbs_lost, fires_started, scoring.best_combo])
+	var frac: float = town.demolished_fraction() if is_instance_valid(town) else 0.0
+	lines.append("CITY %d%% DEMOLISHED%s" % [int(round(frac * 100.0)), "  -  nothing is left standing, a fresh city is built for the next onslaught" if frac >= 0.95 else "  -  it stays like this for the next onslaught"])
+	city_wiped = frac >= 0.95
 	lbl_breakdown.text = "\n".join(lines)
 	lbl_hint.visible = false
 	btn_skip.visible = false
@@ -2716,6 +2802,16 @@ func _finish() -> void:
 	print("[launch] result total=%d avg=%.1fms worst=%.1fms" % [total, avg * 1000.0, frame_worst * 1000.0])
 
 func _process(dt: float) -> void:
+	if _exit_t > 0.0:
+		_exit_t -= dt
+		if _exit_t <= 0.0:
+			for b in [btn_exit, btn_exit_r]:
+				if b:
+					b.text = "EXIT"
+	_city_t -= dt
+	if _city_t <= 0.0 and lbl_city and is_instance_valid(town):
+		_city_t = 0.5
+		lbl_city.text = "CITY %d%% DEMOLISHED" % int(round(town.demolished_fraction() * 100.0))
 	_modal_sync()
 	_pad_input(dt)
 	if _toast != null and _toast_t > 0.0:

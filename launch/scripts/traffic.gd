@@ -142,7 +142,7 @@ func _play(p: Dictionary, anim: String) -> void:
 		ap.play(anim, 0.15)
 
 ## Put everybody back for a new run.
-func reset() -> void:
+func reset(keep_cars: bool = false) -> void:
 	for p in peds:
 		if p["body"] != null and is_instance_valid(p["body"]):
 			var body: RigidBody3D = p["body"]
@@ -158,6 +158,8 @@ func reset() -> void:
 		p["target"] = p["home"]
 		p["cur"] = ""
 		_play(p, "idle")
+	if keep_cars:
+		return                                       # the street keeps its wrecks
 	for c in cars:
 		c["wrecked"] = false
 		c["still"] = 0.0

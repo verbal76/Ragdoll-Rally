@@ -1121,6 +1121,141 @@ func reset_in_place() -> void:
 	_restore_glass()
 	fire_reset()
 
+# ================================================================== bigger cities / persistent damage
+var _total_weight: float = 1.0
+
+## Called once the city (and its sprawl) is built: remembers how much there is to demolish.
+func finalize_city() -> void:
+	_total_weight = maxf(standing_weight(), 1.0)
+
+## What is still standing: closed shells count as all their cells, loose or removed pieces as nothing.
+func standing_weight() -> float:
+	var w := 0.0
+	for p in pieces:
+		if not is_instance_valid(p) or p.collision_layer == 0 or p.get_meta("dissolved", false) or not p.freeze:
+			continue
+		w += float(p.get_meta("shell_n", 1)) if Destruction.is_shell(p) else 1.0
+	return w
+
+func demolished_fraction() -> float:
+	return clampf(1.0 - standing_weight() / _total_weight, 0.0, 1.0)
+
+## Next onslaught on the same city: whatever is still flying lands where it is, fires go out, targets can be claimed again.
+## Broken buildings, wrecked cars and dust-and-rubble stay exactly as the last run left them.
+func new_run_soft() -> void:
+	_recent_gaps.clear()
+	for p in released_order:
+		if is_instance_valid(p) and not p.freeze:
+			p.linear_velocity = Vector3.ZERO
+			p.angular_velocity = Vector3.ZERO
+			p.freeze = true
+			note_disturbance(p.global_position)        # anything left hanging with nothing under it falls in the first moments
+	released_order.clear()
+	_live_cnt = 0
+	unclaim_all()
+	_hazard_q.clear()
+	hazards_fired = 0
+	for d in debris:
+		d.freeze = true
+		d.visible = false
+		d.collision_layer = 0
+		d.position = Vector3(0, -50, 0)
+	for i in fire_state.size():
+		fire_state[i] = 0
+		fire_timer[i] = 0.0
+		fire_handle[i] = -1
+	burning_count = 0
+	if fx:
+		fx.clear_all()
+	for b in props:
+		if is_instance_valid(b) and not b.get_meta("exploded", false):
+			b.sleeping = true
+
+## Footprint (x, z rectangle) of a body, from its collision boxes / cylinders.
+func _footprint(n: Node3D) -> Rect2:
+	var r := Rect2()
+	var first := true
+	for c in n.get_children():
+		if not (c is CollisionShape3D):
+			continue
+		var sh: Shape3D = (c as CollisionShape3D).shape
+		var ex := Vector3.ZERO
+		if sh is BoxShape3D:
+			var hb: Vector3 = (sh as BoxShape3D).size * 0.5
+			var bs: Basis = n.global_transform.basis
+			ex = Vector3(absf(bs.x.x) * hb.x + absf(bs.y.x) * hb.y + absf(bs.z.x) * hb.z, 0.0, absf(bs.x.z) * hb.x + absf(bs.y.z) * hb.y + absf(bs.z.z) * hb.z)
+		elif sh is CylinderShape3D:
+			ex = Vector3((sh as CylinderShape3D).radius, 0.0, (sh as CylinderShape3D).radius)
+		elif sh is SphereShape3D:
+			ex = Vector3((sh as SphereShape3D).radius, 0.0, (sh as SphereShape3D).radius)
+		else:
+			continue
+		var gp: Vector3 = (c as CollisionShape3D).global_position
+		var rr := Rect2(gp.x - ex.x, gp.z - ex.z, ex.x * 2.0, ex.z * 2.0)
+		r = rr if first else r.merge(rr)
+		first = false
+	return r if not first else Rect2()
+
+## More city: blocks of extra modular buildings on every free lot, so the districts run on instead of leaving open grass.
+func sprawl() -> void:
+	if legacy:
+		return
+	var taken: Array[Rect2] = []
+	for p in pieces:
+		var fr := _footprint(p)
+		if fr.size.x > 0.0 and fr.size.x < 120.0:
+			taken.append(fr)
+	for b in props:
+		var fr2 := _footprint(b)
+		if fr2.size.x > 0.0:
+			taken.append(fr2)
+	for c in get_children():
+		if c is StaticBody3D and not c.has_meta("ground") and not c.has_meta("boundary") and not c.has_meta("terrain") and not c.has_meta("glass"):
+			var fr3 := _footprint(c as Node3D)
+			if fr3.size.x > 0.0 and fr3.size.x < 120.0:
+				taken.append(fr3)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4711 + env_id.hash() % 9973
+	var added := 0
+	var x := 22.0
+	while x < WORLD_X_MAX - 24.0:
+		var z := -WORLD_Z + 10.0
+		while z < WORLD_Z - 8.0:
+			var w: float = rng.randf_range(7.0, 13.0)
+			var d: float = rng.randf_range(7.0, 12.0)
+			var cx: float = x + rng.randf_range(-2.0, 2.0)
+			var cz: float = z + rng.randf_range(-2.0, 2.0)
+			z += 16.5
+			if absf(cz) < 12.0 and cx < 50.0:
+				continue                                          # the launch corridor stays open
+			if _is_reserved(cx, cz, 4.0):
+				continue
+			var lot := Rect2(cx - w * 0.5 - 2.5, cz - d * 0.5 - 2.5, w + 5.0, d + 5.0)
+			var clear := true
+			for t in taken:
+				if t.intersects(lot):
+					clear = false
+					break
+			if not clear:
+				continue
+			var g0: float = 1.0e9
+			var g1: float = -1.0e9
+			for o in [Vector2(-w * 0.5, -d * 0.5), Vector2(w * 0.5, -d * 0.5), Vector2(-w * 0.5, d * 0.5), Vector2(w * 0.5, d * 0.5), Vector2.ZERO]:
+				var gy: float = ground_y(cx + o.x, cz + o.y)
+				g0 = minf(g0, gy)
+				g1 = maxf(g1, gy)
+			if g1 - g0 > 2.4:
+				continue                                          # too steep for a block
+			var far: float = clampf((cx - 40.0) / 280.0, 0.0, 1.0)
+			var h: float = rng.randf_range(7.0, 14.0 + 30.0 * far * rng.randf())
+			var col: Color = MOD_WALLS[rng.randi() % MOD_WALLS.size()]
+			shell_box(Vector3(cx, g0 + h * 0.5, cz), Vector3(w, h, d), col, "masonry", "sp_%d" % added, 6.0, true)
+			taken.append(lot)
+			added += 1
+			if added >= 320:
+				return
+		x += 17.0
+
 # ------------------------------------------------------------ the deep city (60-200 m)
 func _reserve(x0: float, z0: float, x1: float, z1: float) -> void:
 	_reserved.append(Rect2(Vector2(minf(x0, x1), minf(z0, z1)), Vector2(absf(x1 - x0), absf(z1 - z0))))
