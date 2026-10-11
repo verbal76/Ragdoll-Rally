@@ -213,6 +213,31 @@ func _run() -> void:
 	c.pad_override = false
 	c.last_device = "kbm"
 	main.state = main.State.AIM
+	# the left stick aims in the game view and must not cycle the menu buttons
+	main.reset()
+	await frames(5)
+	c.pad_override = true
+	c.last_device = "pad"
+	main._apply_focus_mode()
+	var sj := InputEventJoypadMotion.new()
+	sj.axis = JOY_AXIS_LEFT_X
+	sj.axis_value = 1.0
+	Input.parse_input_event(sj)
+	await frames(4)
+	check(main.get_viewport().gui_get_focus_owner() == null, "the left stick does not highlight menu buttons in the game view")
+	c.pad_override = false
+	c.last_device = "kbm"
+	# artillery: the stick moves the bullseye
+	main.launcher_levels["artillery"] = 1
+	main.select_launcher("artillery")
+	await frames(5)
+	var bx0: float = main.bullseye.x
+	Input.action_press("aim_right", 1.0)
+	await frames(40)
+	Input.action_release("aim_right")
+	check(main.bullseye.x > bx0 + 5.0, "artillery: the stick moves the bullseye (%.0f -> %.0f)" % [bx0, main.bullseye.x])
+	main.launcher_levels["artillery"] = 0
+	main.select_launcher("slingshot")
 	# prompts follow the device
 	c.last_device = "pad"
 	check(c.prompt("fire") != "", "pad prompt: %s" % c.prompt("fire"))

@@ -1796,6 +1796,13 @@ func _input(event: InputEvent) -> void:
 			_focus_menu()
 			get_viewport().set_input_as_handled()
 			return
+	var in_menu: bool = _topmost_ui_root() != null or state == State.RESULT or state == State.SELECT
+	if event is InputEventJoypadMotion and not in_menu:
+		# the sticks aim in the game view; they must never walk the menu highlight around
+		var fo4: Control = get_viewport().gui_get_focus_owner()
+		if fo4 != null and absf((event as InputEventJoypadMotion).axis_value) > 0.3:
+			fo4.release_focus()
+		return
 	if from_pad and event.is_pressed() and (event.is_action("ui_up") or event.is_action("ui_down") or event.is_action("ui_left") or event.is_action("ui_right")):
 		_apply_focus_mode()
 		var fo2: Control = get_viewport().gui_get_focus_owner()
