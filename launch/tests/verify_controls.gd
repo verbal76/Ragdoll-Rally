@@ -187,6 +187,32 @@ func _run() -> void:
 	T._airborne(fl)
 	fl.freeze = true
 	check(T._airborne(fl), "airborne check sees open air under a piece")
+	# gamepad SELECT: highlights / presses menu buttons, default A, remappable
+	check(c.entry("select")["pad"][0] != null and c.label_of(c.entry("select")["pad"][0]) in ["A", "Cross"], "select defaults to the gamepad A button (%s)" % c.label_of(c.entry("select")["pad"][0]))
+	c.pad_override = true
+	c.last_device = "pad"
+	main._apply_focus_mode()
+	main._finish()
+	await frames(4)
+	var fo0 = main.get_viewport().gui_get_focus_owner()
+	check(fo0 is Button, "a result button is highlighted for the controller (%s)" % (fo0.text if fo0 else "none"))
+	var hits := [0]
+	var tb := Button.new()
+	tb.text = "T"
+	tb.pressed.connect(func(): hits[0] += 1)
+	main.ui.add_child(tb)
+	tb.focus_mode = Control.FOCUS_ALL
+	tb.grab_focus()
+	var se := InputEventAction.new()
+	se.action = "select"
+	se.pressed = true
+	Input.parse_input_event(se)
+	await frames(3)
+	check(hits[0] == 1, "select presses the highlighted button exactly once (%d)" % hits[0])
+	tb.queue_free()
+	c.pad_override = false
+	c.last_device = "kbm"
+	main.state = main.State.AIM
 	# prompts follow the device
 	c.last_device = "pad"
 	check(c.prompt("fire") != "", "pad prompt: %s" % c.prompt("fire"))

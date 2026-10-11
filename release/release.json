@@ -1,15 +1,11 @@
 {
   "product": "Ragdoll Rally Launch",
   "file_stem": "Ragdoll-Rally-Launch",
-  "version": 15,
+  "version": 16,
   "deliver": true,
   "notes": [
-    "Every town and city is now built from the same bright modular buildings (no more dark medieval pieces).",
-    "Cars are in every town: they explode when you hit them, and they drive away from where you are headed.",
-    "People walk the streets, run away as you fly close, and are killed when you reach them.",
-    "Move the launcher anywhere in the city (MOVE button / map) and aim a full 180 degrees sideways and up/down.",
-    "Whole buildings break into pieces instead of flying off as one cube, and loose debris falls instead of hanging in the air.",
-    "Thinner, more detailed comic-ink look (INK button), with brighter dark surfaces.",
-    "Windows PC version (separate download): keyboard, mouse and any controller, every control remappable, and a graphics screen that detects your screen and GPU."
+    "Controller fix: a new SELECT button (default A, remappable in Controls) presses the highlighted menu button. In menus A selects; in the game view A still fires.",
+    "D-pad menu navigation now also reacts to controllers that report the D-pad as an axis.",
+    "Everything from v15 is included: modular-building towns, cars and pedestrians, movable launcher, 180 degree aim, thinner comic ink, Windows PC version."
   ]
 }

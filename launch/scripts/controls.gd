@@ -33,6 +33,7 @@ static func default_actions() -> Array:
 		{"id": "aim_left", "label": "Aim left", "group": "aim", "kbm": [K(KEY_A), K(KEY_LEFT)], "pad": [A(JOY_AXIS_LEFT_X, -1)]},
 		{"id": "aim_right", "label": "Aim right", "group": "aim", "kbm": [K(KEY_D), K(KEY_RIGHT)], "pad": [A(JOY_AXIS_LEFT_X, 1)]},
 		{"id": "precision", "label": "Fine aim (hold)", "group": "aim", "kbm": [K(KEY_SHIFT)], "pad": [A(JOY_AXIS_TRIGGER_LEFT, 1)]},
+		{"id": "select", "label": "Select / press the highlighted button (menus)", "group": "menu", "kbm": [K(KEY_ENTER)], "pad": [B(JOY_BUTTON_A)]},
 		{"id": "elev_up", "label": "Elevation trim up (arc launchers: any angle up to straight up)", "group": "aim", "kbm": [K(KEY_PAGEUP)], "pad": [A(JOY_AXIS_RIGHT_Y, -1)]},
 		{"id": "elev_down", "label": "Elevation trim down (down to straight down)", "group": "aim", "kbm": [K(KEY_PAGEDOWN)], "pad": [A(JOY_AXIS_RIGHT_Y, 1)]},
 		{"id": "move_mod", "label": "Move launcher: hold with the stick (pad)", "group": "move", "kbm": [], "pad": [B(JOY_BUTTON_RIGHT_STICK)]},
@@ -303,8 +304,10 @@ func _on_joy_changed(device: int, connected: bool) -> void:
 	pad_connected.emit(Input.get_joy_name(device) if connected else "Controller", connected)
 
 # ------------------------------------------------------------------------------------------------ queries
+var pad_override := false                 # tests: pretend a controller is connected
+
 func has_pad() -> bool:
-	return Input.get_connected_joypads().size() > 0
+	return pad_override or Input.get_connected_joypads().size() > 0
 
 ## "SPACE / A" style prompt for the active device: the first bound input of an action.
 func prompt(id: String) -> String:

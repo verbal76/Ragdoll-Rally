@@ -1,4 +1,4 @@
-Ragdoll Rally Launch v15 - Windows (x86_64)
+Ragdoll Rally Launch v16 - Windows (x86_64)
 
 Run Ragdoll-Rally-Launch.exe (single file). Windows 10/11, OpenGL 3.3 capable GPU.
 
@@ -7,7 +7,7 @@ CONTROLS (all remappable: Esc / Start -> CONTROLS, or the CONTROLS button top-le
   Keyboard: W/S = pull more/less, A/D = aim, Space/Enter = fire, Shift = fine aim, R = retry, Q/E = previous/next launcher,
             L = launcher shop, U = upgrades, F2 = comic-ink look, F11 = fullscreen, Esc = menu.
   In flight: A/D (or arrows) spin / flip.
-  Gamepad (Xbox / PlayStation / Switch / generic, auto-detected, hot-plug): left stick or D-pad = aim, A / right trigger = fire,
+  Gamepad (Xbox / PlayStation / Switch / generic, auto-detected, hot-plug): left stick or D-pad = aim, right trigger = fire (and A in the game view), A = SELECT in menus (remappable),
             left trigger = fine aim, bumpers = spin in flight and launcher switching, Y = retry, X = launcher shop,
             Back = upgrades, Start = menu.
   Every action has 2 keyboard/mouse and 2 gamepad slots. Click a slot and press the new key / mouse button / pad button /

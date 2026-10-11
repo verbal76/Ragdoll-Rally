@@ -1696,15 +1696,34 @@ func _pad_input(dt: float) -> void:
 func _input(event: InputEvent) -> void:
 	if controls == null or controls.is_listening():
 		return
-	if event is InputEventJoypadButton and event.pressed and event.button_index in [JOY_BUTTON_DPAD_UP, JOY_BUTTON_DPAD_DOWN, JOY_BUTTON_DPAD_LEFT, JOY_BUTTON_DPAD_RIGHT]:
+	var from_pad: bool = event is InputEventJoypadButton or event is InputEventJoypadMotion
+	# SELECT (remappable, default gamepad A): presses the highlighted button. In a menu with nothing highlighted it highlights the first one.
+	# In the game view with no menu involved it does nothing here, so the same A button still fires the weapon.
+	if event.is_action_pressed("select") and not event.is_echo():
+		var fo: Control = get_viewport().gui_get_focus_owner()
+		if fo is BaseButton and fo.is_visible_in_tree() and not (fo as BaseButton).disabled:
+			var bb := fo as BaseButton
+			if bb.toggle_mode:
+				bb.button_pressed = not bb.button_pressed
+			else:
+				bb.pressed.emit()
+			get_viewport().set_input_as_handled()
+			return
+		if _topmost_ui_root() != null or state == State.RESULT or state == State.SELECT:
+			_apply_focus_mode()
+			_focus_menu()
+			get_viewport().set_input_as_handled()
+			return
+	if from_pad and event.is_pressed() and (event.is_action("ui_up") or event.is_action("ui_down") or event.is_action("ui_left") or event.is_action("ui_right")):
 		_apply_focus_mode()
-		if get_viewport().gui_get_focus_owner() == null or not get_viewport().gui_get_focus_owner().is_visible_in_tree():
+		var fo2: Control = get_viewport().gui_get_focus_owner()
+		if fo2 == null or not fo2.is_visible_in_tree():
 			_focus_menu()
 			get_viewport().set_input_as_handled()
 	elif event is InputEventJoypadButton and event.pressed and event.button_index == JOY_BUTTON_B and _topmost_ui_root() == null:
-		var fo: Control = get_viewport().gui_get_focus_owner()
-		if fo:
-			fo.release_focus()
+		var fo3: Control = get_viewport().gui_get_focus_owner()
+		if fo3:
+			fo3.release_focus()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if _handle_actions(event):
