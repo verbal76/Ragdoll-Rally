@@ -1,2 +1,2 @@
-Ragdoll Rally Launch v16 - Windows (x86_64). Download the zip, extract, run Ragdoll-Rally-Launch.exe.
-sha256 0d325e93eb7e8f56bb16e90c121a775da58697b917618cef65fbabb646c5db83
+Ragdoll Rally Launch v17 - Windows (x86_64). Download the zip, extract, run Ragdoll-Rally-Launch.exe.
+sha256 c34dd0153f637c52b225a7bc543a8be9a755c2c79f27df2c0649b92d808f1788
