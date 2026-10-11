@@ -128,11 +128,97 @@ func build(p_legacy: bool = false, p_env: String = "city") -> void:
 		_decor_city()
 
 # ------------------------------------------------------------------ helpers
+var _kit_group := ""                           # building the next kit piece belongs to (colours the modular facade)
+var _mod_info: Dictionary = {}                 # model -> {"box": AABB, "kind": "wall"|"roof"}
+const MOD_WALLS: Array[Color] = [Color(0.93, 0.86, 0.72), Color(0.78, 0.86, 0.93), Color(0.9, 0.78, 0.78), Color(0.8, 0.9, 0.8),
+	Color(0.95, 0.92, 0.7), Color(0.85, 0.8, 0.9), Color(0.72, 0.78, 0.85), Color(0.96, 0.8, 0.66)]
+const MOD_ROOFS: Array[Color] = [Color(0.72, 0.32, 0.26), Color(0.36, 0.40, 0.52), Color(0.58, 0.42, 0.32), Color(0.32, 0.48, 0.38)]
+
 func _kit(model: String) -> Node3D:
+	var mod: Node3D = _modular_piece(model)
+	if mod != null:
+		return mod
 	var path: String = KIT % model
 	if not used_assets.has(path):
 		used_assets.append(path)
 	return (load(path) as PackedScene).instantiate() as Node3D
+
+## Buildings are made of the modular-buildings kit look (flat coloured facades with windows, gabled roofs) in every town.
+## Props (barrels, crates, trees, fences, wells) keep their own models. The piece keeps the exact footprint of the model it stands in for.
+func _modular_piece(model: String) -> Node3D:
+	var kind := ""
+	if model.begins_with("roof"):
+		kind = "roof"
+	elif model.begins_with("wall") or model.begins_with("column") or model.begins_with("tower") or model.begins_with("stone") or model.begins_with("battlement") or model == "window" or model.begins_with("wood-floor") or model.begins_with("watchtower"):
+		kind = "wall"
+	if kind == "":
+		return null
+	var info: Dictionary
+	if _mod_info.has(model):
+		info = _mod_info[model]
+	else:
+		var path: String = KIT % model
+		if not ResourceLoader.exists(path):
+			return null
+		var inst: Node3D = (load(path) as PackedScene).instantiate() as Node3D
+		var box := _scene_aabb(inst)
+		inst.free()
+		info = {"box": box, "kind": kind}
+		_mod_info[model] = info
+	var box2: AABB = info["box"]
+	if box2.size.length() < 0.01:
+		return null
+	if _hctx == null:
+		_hctx = Hillside.Ctx.new()
+		_hctx.t = self
+	var h: int = absi(_kit_group.hash())
+	var stone: bool = model.contains("fortified") or model.begins_with("battlement") or _kit_group.begins_with("fort") or _kit_group.begins_with("castle") or _kit_group.begins_with("keep")
+	var root := Node3D.new()
+	var mi := MeshInstance3D.new()
+	if kind == "roof":
+		var gp := "res://assets/kenney/modular-buildings/roof-gable.glb"
+		if not used_assets.has(gp):
+			used_assets.append(gp)
+		var g: Node3D = (load(gp) as PackedScene).instantiate() as Node3D
+		var gb := _scene_aabb(g)
+		var mesh_src: MeshInstance3D = null
+		for c in g.find_children("*", "MeshInstance3D", true, false):
+			mesh_src = c as MeshInstance3D
+			break
+		if mesh_src == null or gb.size.x < 0.001:
+			g.free()
+			return null
+		mi.mesh = mesh_src.mesh
+		var sc := Vector3(box2.size.x / gb.size.x, box2.size.y / maxf(gb.size.y, 0.001), box2.size.z / gb.size.z)
+		mi.scale = sc
+		mi.position = box2.get_center() - gb.get_center() * sc
+		mi.material_override = Hillside._flat_mat(_hctx, MOD_ROOFS[h % MOD_ROOFS.size()])
+		g.free()
+	else:
+		var bm := BoxMesh.new()
+		bm.size = box2.size
+		mi.mesh = bm
+		mi.position = box2.get_center()
+		var col: Color = Color(0.74, 0.74, 0.76) if stone else MOD_WALLS[h % MOD_WALLS.size()]
+		mi.material_override = Hillside._flat_mat(_hctx, col) if stone else Hillside._wall_mat(_hctx, col)
+	root.add_child(mi)
+	return root
+
+static func _scene_aabb(n: Node3D) -> AABB:
+	var out := AABB()
+	var first := true
+	for c in n.find_children("*", "MeshInstance3D", true, false):
+		var mi := c as MeshInstance3D
+		var t := Transform3D.IDENTITY
+		var cur: Node = mi
+		while cur != null and cur != n:
+			if cur is Node3D:
+				t = (cur as Node3D).transform * t
+			cur = cur.get_parent()
+		var b: AABB = t * mi.get_aabb()
+		out = b if first else out.merge(b)
+		first = false
+	return out
 
 func _mat(c: Color) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
@@ -243,6 +329,7 @@ func _piece(model: String, tile: Vector3, kind: String, group: String, size: Vec
 	sh.size = size * S * 0.98
 	cs.shape = sh
 	b.add_child(cs)
+	_kit_group = group
 	var m := _kit(model)
 	m.scale = Vector3.ONE * S
 	m.position = Vector3(0, -h * 0.5, 0)
@@ -284,6 +371,7 @@ func _static_kit(model: String, tile: Vector3, size: Vector3 = Vector3.ONE) -> N
 	sh.size = size * S
 	cs.shape = sh
 	b.add_child(cs)
+	_kit_group = "s%d_%d" % [int(tile.x / 8.0), int(tile.z / 8.0)]
 	var m := _kit(model)
 	m.scale = Vector3.ONE * S
 	m.position = Vector3(0, -h * 0.5, 0)
@@ -523,7 +611,7 @@ func _own_texture(p: RigidBody3D) -> void:
 	if p.has_meta("own_tex"):
 		return
 	p.set_meta("own_tex", true)
-	for ch in p.get_children():
+	for ch in p.find_children("*", "MeshInstance3D", true, false):
 		if ch is MeshInstance3D:
 			var mi := ch as MeshInstance3D
 			var m = mi.material_override
@@ -546,8 +634,7 @@ func release(p: RigidBody3D, vel: Vector3) -> void:
 		if _live_cnt >= ACTIVE_HARD:
 			dissolve(p, vel)
 			return
-	if p.has_meta("shell_of"):
-		_own_texture(p)
+	_own_texture(p)
 	p.freeze = false
 	note_disturbance(p.global_position)
 	p.set_meta("t_rel", Time.get_ticks_msec())

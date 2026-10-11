@@ -43,8 +43,8 @@ func populate(t: Node, n_cars: int, n_peds: int) -> void:
 	while cars.size() < n_cars and tries < 600:
 		tries += 1
 		var p := Vector3(rng.randf_range(14.0, 300.0), 0.0, rng.randf_range(-110.0, 110.0))
-		if absf(p.z) < 22.0:
-			continue                                    # the flight corridor stays clear (camera line of sight)
+		if absf(p.z) < 8.0 and p.x < 40.0:
+			continue                                    # only the launch pad itself stays clear; cars may stand in the flight path
 		if _free(p, Vector3(5.2, 2.4, 3.0), rng.randi() % 2 == 0):
 			_make_car(p, rng)
 	tries = 0
@@ -109,6 +109,8 @@ func _make_car(p: Vector3, rng: RandomNumberGenerator) -> void:
 			w.rotation_degrees = Vector3(90, 0, 0)
 			w.position = Vector3(wx, -0.45, wz)
 			b.add_child(w)
+	b.axis_lock_angular_x = true
+	b.axis_lock_angular_z = true
 	var driving: bool = rng.randf() < 0.35
 	cars.append({"body": b, "dir": b.basis * Vector3.RIGHT, "speed": rng.randf_range(6.0, 10.0), "driving": driving, "still": 0.0, "wrecked": false})
 
@@ -277,25 +279,37 @@ func _physics_process(dt: float) -> void:
 			np.y = _ground(np.x, np.z)
 			root.position = np
 			root.rotation.y = atan2(dir.x, dir.z)
-	# driving cars roll during a run (while the projectile is in flight) until something stops them
+	# cars: they drive on during a run and swerve away from where the projectile is headed
 	for c in cars:
-		if rb == null or not c["driving"] or c["wrecked"]:
-			continue
 		var b: RigidBody3D = c["body"]
+		if rb == null or c["wrecked"]:
+			continue
 		if not is_instance_valid(b) or not b.visible:
 			c["wrecked"] = true
 			continue
+		var cdir: Vector3 = c["dir"]
+		var cspd: float = c["speed"]
+		var fleeing := false
+		var d2: Vector3 = b.global_position - rp
+		var dh2 := Vector3(d2.x, 0.0, d2.z)
+		var rvh2 := Vector3(rv.x, 0.0, rv.z)
+		if dh2.length() < 48.0 and (rvh2.length() > 4.0 or dh2.length() < 18.0):
+			var perp2 := Vector3(-rvh2.z, 0.0, rvh2.x).normalized()
+			if perp2.dot(dh2) < 0.0:
+				perp2 = -perp2
+			cdir = (perp2 + dh2.normalized() * 0.5).normalized() if rvh2.length() > 1.0 else dh2.normalized()
+			cspd = 12.0
+			fleeing = true
+		elif not c["driving"]:
+			continue
 		b.sleeping = false
-		var d3: Vector3 = c["dir"]
-		var spd2: float = c["speed"]
-		b.linear_velocity = Vector3(d3.x * spd2, b.linear_velocity.y, d3.z * spd2)
-		b.angular_velocity = Vector3(0, 0, 0)
-		var lp: Vector3 = b.get_meta("last_p", b.global_position)
-		var real: float = (b.global_position - lp).length() / maxf(dt, 0.001)
-		c["still"] = float(c["still"]) + dt if real < 0.6 else 0.0
-		b.set_meta("last_p", b.global_position)
-		if float(c["still"]) > 1.0:
-			c["wrecked"] = true
+		var yaw: float = atan2(-cdir.z, cdir.x)
+		b.rotation.y = lerp_angle(b.rotation.y, yaw, minf(1.0, 5.0 * dt))
+		var fwd: Vector3 = b.basis * Vector3.RIGHT
+		b.linear_velocity = Vector3(fwd.x * cspd, b.linear_velocity.y, fwd.z * cspd)
+		b.angular_velocity = Vector3.ZERO
+		if fleeing:
+			c["dir"] = cdir
 
 func _blocked(a: Vector3, b: Vector3) -> bool:
 	var space: PhysicsDirectSpaceState3D = town.get_world_3d().direct_space_state

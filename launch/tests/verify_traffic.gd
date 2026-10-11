@@ -56,6 +56,14 @@ func _run() -> void:
 	var ped3: Dictionary = T.peds[2]
 	T.blast((ped3["root"] as Node3D).global_position + Vector3(2, 0, 0), 6.0)
 	check(ped3["state"] == "dead", "an explosion kills pedestrians in its radius")
+	# cars swerve away from the projectile's path
+	var car: RigidBody3D = T.cars[0]["body"]
+	var cstart: Vector3 = car.global_position
+	fake.global_position = cstart + Vector3(-26.0, 1.0, 0.0)
+	fake.linear_velocity = Vector3(30.0, 0.0, 0.0)
+	await frames(40)
+	var cmoved: float = Vector2(car.global_position.x - cstart.x, car.global_position.z - cstart.z).length()
+	check(cmoved > 2.0 or not car.visible, "a car in the projectile's path drives away (moved %.1f m)" % cmoved)
 	# reset
 	T.reset()
 	check(T.peds.all(func(p): return p["state"] != "dead"), "reset brings everyone back")

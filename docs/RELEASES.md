@@ -1,6 +1,6 @@
 # Releases and versions
 
-**Ragdoll Rally Launch v12 is the current public version (gameplay pivot + studio splash). The next delivered build is v13.**
+**Ragdoll Rally Launch v15 is the current public version. The next delivered build is v16.**
 
 The newest playable file is always the GitHub **Latest** release, titled `Ragdoll Rally Launch v<N>`, containing `Ragdoll-Rally-Launch-v<N>.apk`.
 The rules and the delivery procedure are in the repository root `CLAUDE.md` (they are mandatory for every session).
@@ -49,3 +49,6 @@ If a Windows (or other) build is ever added it shares the Android build's public
 
 ## v13 note
 v13 ships a dead (unreachable) selector string "LOCKED - not built yet": every environment is playable so no screen can show it. It was found after delivery by inspecting the published APK (the CI content check had masked its own exit code through a `tee` pipe; fixed with `pipefail`). The source is cleaned for the next build; v13 itself is unchanged.
+
+| v14 | `v14` | rising hillside cities, flatter launch arc, blood/fire effects |
+| **v15** | `v15` | modular-building towns everywhere, cars + pedestrians, movable launcher + 180-degree aim, mayhem/destruction pass, launchers, comic-ink look, Windows PC build |
