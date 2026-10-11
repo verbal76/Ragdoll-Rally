@@ -60,6 +60,10 @@ func _ground(x: float, z: float) -> float:
 ## True when (x, z) is open ground: nothing standing on it within `size` (box test) and the ground is not covered by a roof.
 func _free(p: Vector3, size: Vector3, rotated: bool) -> bool:
 	var gy: float = _ground(p.x, p.z)
+	var rr: float = maxf(size.x, size.z) * 0.5
+	for o in [Vector2(rr, 0), Vector2(-rr, 0), Vector2(0, rr), Vector2(0, -rr)]:
+		if absf(_ground(p.x + o.x, p.z + o.y) - gy) > 0.25:
+			return false                                 # slopes: nothing parks or stands on a hillside
 	var space: PhysicsDirectSpaceState3D = town.get_world_3d().direct_space_state
 	var q := PhysicsRayQueryParameters3D.create(Vector3(p.x, gy + 70.0, p.z), Vector3(p.x, gy - 2.0, p.z), 1 | 4)
 	var hit: Dictionary = space.intersect_ray(q)
@@ -70,7 +74,7 @@ func _free(p: Vector3, size: Vector3, rotated: bool) -> bool:
 	bx.size = size + Vector3(1.0, 0.0, 1.0)
 	sq.shape = bx
 	sq.transform = Transform3D(Basis(Vector3.UP, PI * 0.5 if rotated else 0.0), Vector3(p.x, gy + size.y * 0.5 + 0.3, p.z))
-	sq.collision_mask = 4
+	sq.collision_mask = 1 | 4
 	return space.intersect_shape(sq, 1).is_empty()
 
 func _make_car(p: Vector3, rng: RandomNumberGenerator) -> void:
