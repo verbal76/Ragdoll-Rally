@@ -1,4 +1,4 @@
-Ragdoll Rally Launch v16 - Windows (x86_64)
+Ragdoll Rally Launch v17 - Windows (x86_64)
 
 Run Ragdoll-Rally-Launch.exe (single file). Windows 10/11, OpenGL 3.3 capable GPU.
 
