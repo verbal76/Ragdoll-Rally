@@ -60,8 +60,28 @@ var last_device: String = "kbm"
 var pad_name: String = ""
 var _listening: Dictionary = {}          # {action, device, slot} while waiting for the next input
 
+## Steam Deck / Steam Machine (SteamOS): controller glyphs are the default and the touch pads / touch screen, which Steam Input turns
+## into mouse clicks, never switch the on-screen prompts to mouse and keyboard.
+static func is_steam_deck() -> bool:
+	if OS.get_environment("SteamDeck") == "1" or OS.get_environment("SteamOS") == "1" or OS.get_environment("SteamGamepadUI") != "":
+		return true
+	var d: String = OS.get_distribution_name().to_lower()
+	if d.contains("steamos") or d.contains("steam deck"):
+		return true
+	for f in ["/sys/devices/virtual/dmi/id/board_name", "/sys/devices/virtual/dmi/id/product_name"]:
+		if FileAccess.file_exists(f):
+			var t: String = FileAccess.get_file_as_string(f).strip_edges()
+			if t == "Jupiter" or t == "Galileo" or t.begins_with("Steam Deck"):
+				return true
+	return false
+
+var deck := false
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	deck = is_steam_deck()
+	if deck or Input.get_connected_joypads().size() > 0:
+		last_device = "pad"                       # the controller is the default; the first key press switches to the keyboard
 	load_config()
 	Input.joy_connection_changed.connect(_on_joy_changed)
 	var pads: PackedInt32Array = Input.get_connected_joypads()
@@ -124,7 +144,7 @@ func pad_kind() -> String:
 		return "ps"
 	if n.contains("nintendo") or n.contains("switch") or n.contains("joy-con"):
 		return "nintendo"
-	return "xbox"
+	return "xbox"                                  # Steam Deck / Steam Controller present as an Xbox layout: A B X Y, LB RB, LT RT
 
 func label_of(spec: Variant) -> String:
 	if spec == null or not (spec is Dictionary):
@@ -267,7 +287,7 @@ func listening_for() -> Dictionary:
 
 func _input(event: InputEvent) -> void:
 	# which device is the player using right now (drives the prompts)
-	if event is InputEventKey or (event is InputEventMouseButton and event.device != InputEvent.DEVICE_ID_EMULATION):
+	if event is InputEventKey or (event is InputEventMouseButton and event.device != InputEvent.DEVICE_ID_EMULATION and not deck):
 		_set_device("kbm")
 	elif event is InputEventJoypadButton or (event is InputEventJoypadMotion and absf((event as InputEventJoypadMotion).axis_value) > 0.5):
 		_set_device("pad")

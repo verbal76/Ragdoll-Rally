@@ -12,6 +12,10 @@ var _status: Label
 var _sliders := {}
 var _slot_btns := {}          # "action|device|slot" -> Button
 var _fs_btn: Button
+var _hdr: Array = []
+var _hint: Label
+var _kbm_btn: Button
+var _force_kbm := false
 var _first: Control
 
 func setup(c: Node) -> void:
@@ -73,6 +77,7 @@ func setup(c: Node) -> void:
 		var hl := _label(h, 20)
 		hl.add_theme_color_override("font_color", Color(0.6, 0.85, 1.0))
 		_grid.add_child(hl)
+		_hdr.append(hl)
 	for a in controls.actions:
 		var id: String = str(a["id"])
 		var nl := _label(str(a["label"]), 20)
@@ -106,14 +111,19 @@ func setup(c: Node) -> void:
 				for ii in controls.SLOTS:
 					controls.clear(id, dd, ii))
 		_grid.add_child(xb)
-	var hint := _label("Click a slot, then press the key, mouse button, gamepad button or stick direction. Esc cancels. Right-click clears a slot.", 18)
-	hint.add_theme_color_override("font_color", Color(0.75, 0.8, 0.9))
-	vb.add_child(hint)
+	_hint = _label("", 18)
+	_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hint.add_theme_color_override("font_color", Color(0.75, 0.8, 0.9))
+	vb.add_child(_hint)
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 14)
 	vb.add_child(row)
 	row.add_child(_btn("Reset to defaults", func(): controls.reset_defaults()))
+	_kbm_btn = _btn("Keyboard bindings", func():
+		_force_kbm = not _force_kbm
+		refresh())
+	row.add_child(_kbm_btn)
 	_fs_btn = _btn("Fullscreen", _toggle_fullscreen)
 	row.add_child(_fs_btn)
 	if OS.get_name() == "Windows" or OS.get_name() == "Linux" or OS.get_name() == "macOS":
@@ -175,6 +185,17 @@ func refresh() -> void:
 		_status.text = "Controller detected: %s   (using %s)" % [controls.pad_name if controls.pad_name != "" else Input.get_joy_name(pads[0]), "gamepad" if controls.last_device == "pad" else "keyboard / mouse"]
 	else:
 		_status.text = "No controller detected - plug one in or pair one, it is picked up automatically.  Using keyboard / mouse."
+	var pad_mode: bool = controls.last_device == "pad" and not _force_kbm
+	_grid.columns = 4 if pad_mode else 6
+	for i in _hdr.size():
+		(_hdr[i] as Control).visible = not (pad_mode and (i == 1 or i == 2))
+	for k in _slot_btns.keys():
+		if str(k).contains("|kbm|"):
+			(_slot_btns[k] as Control).visible = not pad_mode
+	if _kbm_btn:
+		_kbm_btn.text = "Show keyboard bindings" if pad_mode else ("Hide keyboard bindings" if controls.last_device == "pad" else "Keyboard bindings")
+		_kbm_btn.visible = controls.last_device == "pad" or _force_kbm
+	_hint.text = "Select a slot, then press a gamepad button or push a stick. Reset to defaults undoes every change." if pad_mode else "Click a slot, then press the key, mouse button, gamepad button or stick direction. Esc cancels. Right-click clears a slot."
 	var lst: Dictionary = controls.listening_for()
 	for a in controls.actions:
 		var id: String = str(a["id"])

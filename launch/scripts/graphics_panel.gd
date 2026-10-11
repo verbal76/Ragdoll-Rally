@@ -45,20 +45,22 @@ func setup(gfx: Node) -> void:
 	_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(_info)
 	_row(vb, "preset", "Quality preset", func(): return str(g.s["preset"]).to_upper() if g.s["preset"] != "auto" else "AUTO (%s)" % g.recommend().to_upper(),
-		func(): g.choose_preset(_next(["auto", "low", "medium", "high", "ultra"], str(g.s["preset"]) if g.s["preset"] != "custom" else "auto")))
+		func(): g.choose_preset(_next((["auto", "deck", "low", "medium", "high", "ultra"] if bool(g.info.get("deck", false)) else ["auto", "low", "medium", "high", "ultra"]), str(g.s["preset"]) if g.s["preset"] != "custom" else "auto")))
 	_row(vb, "mode", "Display mode", func(): return {"fullscreen": "Fullscreen (borderless)", "exclusive": "Fullscreen (exclusive)", "windowed": "Windowed"}[str(g.s["mode"])],
-		func(): g.set_opt("mode", _next(g.MODES, str(g.s["mode"]))))
+		func(): g.set_opt("mode", _next((["fullscreen", "windowed"] if bool(g.info.get("deck", false)) else g.MODES), str(g.s["mode"]))))
 	_row(vb, "res", "Window size (windowed)", func(): return "As is" if (g.s["res"] as Vector2i).x == 0 else "%dx%d" % [(g.s["res"] as Vector2i).x, (g.s["res"] as Vector2i).y],
 		func(): g.set_opt("res", _next(g.resolution_options(), g.s["res"])))
 	_row(vb, "scale", "Render resolution", func(): return "%d%%" % int(round(float(g.s["scale"]) * 100.0)),
 		func(): g.set_opt("scale", _next([0.5, 0.67, 0.75, 0.85, 1.0], _near([0.5, 0.67, 0.75, 0.85, 1.0], float(g.s["scale"])))))
+	_row(vb, "ink", "Comic-ink quality", func(): return {"full": "Full", "lite": "Lite (faster)", "off": "Off"}[str(g.s.get("ink", "full"))],
+		func(): g.set_opt("ink", _next(["full", "lite", "off"], str(g.s.get("ink", "full")))))
 	_row(vb, "msaa", "Anti-aliasing", func(): return "Off" if int(g.s["msaa"]) == 0 else "MSAA %dx" % int(g.s["msaa"]),
 		func(): g.set_opt("msaa", _next([0, 2, 4], int(g.s["msaa"]))))
 	_row(vb, "shadows", "Shadows", func(): return "On" if bool(g.s["shadows"]) else "Off", func(): g.set_opt("shadows", not bool(g.s["shadows"])))
 	_row(vb, "vsync", "V-Sync", func(): return "On" if bool(g.s["vsync"]) else "Off", func(): g.set_opt("vsync", not bool(g.s["vsync"])))
 	_row(vb, "fps", "Frame rate limit", func(): return "Unlimited" if int(g.s["fps"]) == 0 else "%d fps" % int(g.s["fps"]),
 		func(): g.set_opt("fps", _next(g.FPS_CAPS, int(g.s["fps"]))))
-	var hint := _label("Press a row to change it. Auto picks the best setting for your screen and graphics chip; Low suits integrated (APU) graphics.", 18)
+	var hint := _label("Press a row to change it. Auto picks the settings that suit your screen and graphics chip.", 18)
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.modulate = Color(0.75, 0.8, 0.9)
 	vb.add_child(hint)

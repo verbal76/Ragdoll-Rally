@@ -5,6 +5,7 @@ render_mode unshaded, depth_test_disabled, cull_disabled, skip_vertex_transform;
 uniform sampler2D screen_tex : hint_screen_texture, filter_nearest, repeat_disable;
 uniform sampler2D depth_tex : hint_depth_texture, filter_nearest, repeat_disable;
 uniform float bands = 6.0;
+uniform float lite = 0.0;           // 1 = half the edge samples (Steam Deck / integrated graphics)
 uniform float detail_keep = 0.5;    // how much of the original shading survives the cel bands (texture / window / trim detail)
 uniform float sat_boost = 1.45;
 uniform float contrast = 1.12;
@@ -37,6 +38,10 @@ void fragment() {
 	vec2 offs[8] = vec2[](vec2(1, 0), vec2(-1, 0), vec2(0, 1), vec2(0, -1), vec2(1, 1), vec2(-1, -1), vec2(1, -1), vec2(-1, 1));
 	float l[8];
 	for (int i = 0; i < 8; i++) {
+		if (lite > 0.5 && i >= 4) {
+			l[i] = lum;
+			continue;
+		}
 		vec2 uv = SCREEN_UV + offs[i] * px * line_px;
 		float dn = lin_depth(uv, INV_PROJECTION_MATRIX);
 		float nsky = step(0.9999, texture(depth_tex, uv).r);

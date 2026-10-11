@@ -238,6 +238,49 @@ func _run() -> void:
 	check(main.bullseye.x > bx0 + 5.0, "artillery: the stick moves the bullseye (%.0f -> %.0f)" % [bx0, main.bullseye.x])
 	main.launcher_levels["artillery"] = 0
 	main.select_launcher("slingshot")
+	# Steam Deck: controller glyphs by default, touch pads / touch screen (mouse clicks) never switch to keyboard prompts
+	c.deck = true
+	c.last_device = "pad"
+	var mclick := InputEventMouseButton.new()
+	mclick.button_index = MOUSE_BUTTON_LEFT
+	mclick.pressed = true
+	mclick.device = 0
+	c._input(mclick)
+	check(c.last_device == "pad", "Deck: a trackpad click keeps the controller glyphs")
+	c.deck = false
+	c._input(mclick)
+	check(c.last_device == "kbm", "outside the Deck a mouse click switches to keyboard prompts")
+	c.pad_override = true
+	c.last_device = "pad"
+	var bad := false
+	for lid in ["slingshot", "catapult", "cannon", "artillery", "railgun"]:
+		main.launcher_levels[lid] = 1
+		main.select_launcher(lid)
+		var ht: String = main._hint_text()
+		for w in ["DRAG", "WASD", "CLICK", "TAP", "MOUSE", "KEY"]:
+			if ht.to_upper().contains(w):
+				bad = true
+				print("   hint for %s: %s" % [lid, ht])
+	main.launcher_levels["catapult"] = 0
+	main.launcher_levels["cannon"] = 0
+	main.launcher_levels["artillery"] = 0
+	main.launcher_levels["railgun"] = 0
+	main.select_launcher("slingshot")
+	check(not bad, "with a controller no on-screen hint mentions mouse or keyboard")
+	main.controls_panel.open()
+	await frames(2)
+	check(main.controls_panel._grid.columns == 4, "controls screen shows only gamepad bindings while a controller is in use")
+	main.controls_panel.close()
+	var G2 = main.gfx
+	if G2 != null:
+		G2.info["deck"] = true
+		check(G2.recommend() == "deck", "Steam Deck gets its own graphics preset")
+		G2.choose_preset("auto")
+		check(is_equal_approx(float(G2.s["scale"]), 0.8) and G2.s["ink"] == "lite" and int(G2.s["fps"]) == 60, "Deck preset: 80% render scale, lite ink, 60 fps cap")
+		G2.info["deck"] = false
+		G2.choose_preset("auto")
+	c.pad_override = false
+	c.last_device = "kbm"
 	# prompts follow the device
 	c.last_device = "pad"
 	check(c.prompt("fire") != "", "pad prompt: %s" % c.prompt("fire"))

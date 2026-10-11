@@ -425,7 +425,7 @@ func _setup_ui() -> void:
 	lbl_stats = _label(22, HORIZONTAL_ALIGNMENT_LEFT)
 	ui.add_child(lbl_stats)
 	lbl_stats.position = Vector2(16, 10)
-	lbl_fps = _label(16, HORIZONTAL_ALIGNMENT_LEFT)
+	lbl_fps = _label(18, HORIZONTAL_ALIGNMENT_LEFT)
 	ui.add_child(lbl_fps)
 	lbl_fps.position = Vector2(16, 690)
 	lbl_fps.modulate = Color(1, 1, 1, 0.6)
@@ -732,7 +732,7 @@ func _first_run_graphics() -> void:
 		return
 	for i in 4:
 		await get_tree().process_frame
-	if gfx.first_run and DisplayServer.get_name() != "headless":
+	if gfx.first_run and DisplayServer.get_name() != "headless" and not controls.deck:
 		graphics_panel.open()
 	for n in [result_panel, launcher_panel, upgrade_panel, controls_panel]:
 		if n != null and n.get_parent() == ui:
@@ -1306,23 +1306,30 @@ func _apply_launcher() -> void:
 func _hint_text() -> String:
 	var desk: bool = controls != null and not OS.has_feature("mobile")
 	var pad: bool = desk and controls.last_device == "pad" and controls.has_pad()
+	var fire: String = controls.prompt("fire") if controls else ""
 	match str(L["mode"]):
 		"direct":
+			if pad:
+				return "AIM: LEFT STICK    FIRE: %s" % fire
 			if desk:
-				return "AIM: STICK / DRAG    FIRE: %s" % controls.prompt("fire")
+				return "AIM: DRAG    FIRE: %s" % fire
 			return "DRAG TO AIM, RELEASE TO FIRE"
 		"charge":
+			if pad:
+				return "AIM: LEFT STICK    HOLD %s TO CHARGE" % fire
 			if desk:
-				return "AIM: STICK / DRAG    HOLD %s TO CHARGE" % controls.prompt("fire")
+				return "AIM: DRAG    HOLD %s TO CHARGE" % fire
 			return "DRAG TO AIM, RELEASE TO CHARGE"
 		"topdown":
+			if pad:
+				return "MOVE BULLSEYE: LEFT STICK    FIRE: %s" % fire
 			if desk:
-				return "MOVE BULLSEYE: STICK / CLICK    FIRE: %s" % controls.prompt("fire")
+				return "MOVE BULLSEYE: CLICK    FIRE: %s" % fire
 			return "TOUCH THE MAP: BULLSEYE, THEN FIRE"
+	if pad:
+		return "LEFT STICK: PULL BACK + AIM    FIRE: %s" % fire
 	if desk:
-		if pad:
-			return "STICK: PULL BACK + AIM    FIRE: %s" % controls.prompt("fire")
-		return "DRAG BACK + RELEASE, OR WASD + %s" % controls.prompt("fire")
+		return "DRAG BACK + RELEASE, OR WASD + %s" % fire
 	return "DRAG BACK, AIM, RELEASE!" if attempt <= 1 else "AGAIN! Drag back and let go."
 
 func _update_launcher_ui() -> void:
@@ -1598,6 +1605,8 @@ func _handle_actions(event: InputEvent) -> bool:
 		_cycle_launcher(1)
 	elif event.is_action("fire") and get_viewport().gui_get_focus_owner() != null and controls.last_device == "pad":
 		return false
+	elif event.is_action("fire") and _place_mode:
+		set_place_mode(false)
 	elif event.is_action("fire"):
 		if state == State.RESULT:
 			_retry()
@@ -1690,7 +1699,7 @@ func set_place_mode(on: bool) -> void:
 		var h: float = maxf(150.0 / (tan(deg_to_rad(28.0)) * aspect), 130.0 / tan(deg_to_rad(28.0)))
 		cam.global_transform = Transform3D(Basis.IDENTITY, Vector3(150.0, h, 0.0)).looking_at(Vector3(150.0, 0.0, 0.0), Vector3(0, 0, -1))
 		cam.far = maxf(cam.far, h + 100.0)
-		lbl_hint.text = "TAP THE CITY TO MOVE THE LAUNCHER"
+		lbl_hint.text = ("LEFT STICK: MOVE THE LAUNCHER    %s: DONE" % controls.prompt("fire")) if (controls != null and controls.last_device == "pad") else "TAP THE CITY TO MOVE THE LAUNCHER"
 		lbl_hint.visible = true
 	else:
 		cam.global_transform = _cam_aim_xf
@@ -1740,6 +1749,9 @@ func _pad_input(dt: float) -> void:
 	if state != State.AIM or dragging or _charging or _windup >= 0.0:
 		return
 	if _place_mode:
+		var pv: Vector2 = controls.aim_vector()
+		if pv.length() > 0.05:
+			move_launcher(launch_origin.x - pv.y * 60.0 * dt, launch_origin.z + pv.x * 60.0 * dt)
 		return
 	var mv: Vector2 = Input.get_vector("move_left", "move_right", "move_fwd", "move_back", 0.3)
 	var pad_mode: bool = controls.last_device == "pad"
@@ -2809,6 +2821,7 @@ func _finish() -> void:
 	print("[launch] result total=%d avg=%.1fms worst=%.1fms" % [total, avg * 1000.0, frame_worst * 1000.0])
 
 func _process(dt: float) -> void:
+	_adapt_resolution(dt)
 	if _exit_t > 0.0:
 		_exit_t -= dt
 		if _exit_t <= 0.0:
@@ -2975,6 +2988,8 @@ func _setup_ink() -> void:
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://assets/fx/ink_post.gdshader")
 	mat.render_priority = 127
+	_ink_mat = mat
+	mat.set_shader_parameter("lite", 1.0 if _ink_quality == "lite" else 0.0)
 	qm.material = mat
 	_ink_quad = MeshInstance3D.new()
 	_ink_quad.mesh = qm
@@ -2983,6 +2998,45 @@ func _setup_ink() -> void:
 	_ink_quad.position = Vector3(0, 0, -1)
 	_ink_quad.visible = ink_on
 	cam.add_child(_ink_quad)
+
+var _ink_mat: ShaderMaterial
+var _ink_quality := "full"
+var _ink_forced_off := false
+
+## Comic-ink quality from the graphics screen: full, lite (half the edge samples) or off.
+func set_ink_quality(q: String) -> void:
+	_ink_quality = q
+	if _ink_mat:
+		_ink_mat.set_shader_parameter("lite", 1.0 if q == "lite" else 0.0)
+	if q == "off":
+		_ink_forced_off = true
+		set_ink(false)
+	elif _ink_forced_off:
+		_ink_forced_off = false
+		set_ink(true)
+
+var _fps_ema := 60.0
+var _slow_t := 0.0
+var _scale_cool := 0.0
+
+## Playable by default on modest hardware (Steam Deck: 30 fps at 800p): when a flight runs under ~30 fps for a couple of seconds the render
+## resolution steps down; it never steps back up on its own and never goes below 55%.
+func _adapt_resolution(dt: float) -> void:
+	if gfx == null or DisplayServer.get_name() == "headless" or state != State.FLIGHT:
+		_slow_t = 0.0
+		return
+	_fps_ema = lerpf(_fps_ema, 1.0 / maxf(dt / maxf(Engine.time_scale, 0.05), 0.001), 0.05)
+	_scale_cool -= dt
+	if _fps_ema < 29.0:
+		_slow_t += dt
+	else:
+		_slow_t = 0.0
+	if _slow_t > 2.0 and _scale_cool <= 0.0 and float(gfx.s["scale"]) > 0.55 and ["auto", "deck", "low", "medium"].has(str(gfx.s["preset"])):
+		gfx.s["scale"] = maxf(float(gfx.s["scale"]) - 0.1, 0.55)
+		gfx.apply()
+		gfx.save()
+		_slow_t = 0.0
+		_scale_cool = 4.0
 
 func set_ink(on: bool) -> void:
 	ink_on = on
