@@ -1,3 +1,2 @@
-Ragdoll Rally Launch v15 - Windows (x86_64). Download the zip, extract, run Ragdoll-Rally-Launch.exe.
-sha256 ef0cf3692ef9f049d42d4d402a68c18f592578dab8a466f01fd95d310a3d1d7e
-Source: claude/launch-gameplay-pivot @ 5638c8e + release v15
+Ragdoll Rally Launch v16 - Windows (x86_64). Download the zip, extract, run Ragdoll-Rally-Launch.exe.
+sha256 0d325e93eb7e8f56bb16e90c121a775da58697b917618cef65fbabb646c5db83
