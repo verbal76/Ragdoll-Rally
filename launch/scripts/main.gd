@@ -591,7 +591,10 @@ func _build_theme() -> void:
 	th.set_color("font_color", "Button", Color(1, 1, 1))
 	th.set_color("font_hover_color", "Button", Color(1, 1, 1))
 	th.set_color("font_disabled_color", "Button", Color(0.55, 0.6, 0.68))
-	get_window().theme = th
+	_ui_theme = th
+	for c in ui.get_children() if ui != null else []:
+		if c is Control:
+			(c as Control).theme = th
 
 func _fit_modal(panel: Control) -> void:
 	if panel == null:
@@ -620,6 +623,7 @@ func _fit_modal(panel: Control) -> void:
 				vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				sc.add_child(vb)
 
+var _ui_theme: Theme
 var _was_modal := false
 var _hud_hide: Array = []
 var lbl_legend: Label
@@ -650,6 +654,12 @@ func _modal_sync() -> void:
 		lbl_legend.text = "D-PAD: choose     A: select     B: back"
 
 func _raise_panels() -> void:
+	if _ui_theme == null:
+		_build_theme()
+	else:
+		for c in ui.get_children():
+			if c is Control:
+				(c as Control).theme = _ui_theme
 	_hud_hide = [btn_ink, btn_move, btn_controls, btn_gfx, lbl_hint, lbl_stats, lbl_score, lbl_fps, btn_reset]
 	for n in [launcher_panel, upgrade_panel, controls_panel, graphics_panel]:
 		_fit_modal(n)

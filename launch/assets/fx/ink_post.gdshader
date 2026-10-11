@@ -60,7 +60,8 @@ void fragment() {
 	vec2 g = fract(FRAGCOORD.xy / dot_px) - 0.5;
 	float dots = 1.0 - smoothstep(0.0, 0.08, length(g) - (0.6 - band) * 0.8);
 	cel = mix(cel, cel * 0.88, dots * step(band, 0.34));
-	cel = pow(clamp(cel, 0.0, 1.0), vec3(0.8));      // lift the mids so dark stone / slate / brick stays readable
+	cel = clamp(cel, 0.0, 1.0);
+	cel = mix(pow(cel, vec3(0.62)) * 1.05, cel, smoothstep(0.18, 0.55, lum));      // only dark surfaces are lifted; mid and bright ones are left alone      // lift the mids so dark stone / slate / brick stays readable
 	vec3 outc = mix(cel, col, sky);                 // sky: untouched
 	ALBEDO = mix(outc, ink, edge);
 }
