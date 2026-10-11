@@ -3,6 +3,7 @@ extends SceneTree
 ## the InputMap, drive the real game (virtual aim, fire, retry), and the controller prompts follow the detected device.
 ##   godot --headless --path launch -s tests/verify_controls.gd
 const Controls := preload("res://scripts/controls.gd")
+
 var fails := 0
 var main: Node
 
@@ -125,6 +126,67 @@ func _run() -> void:
 	check(main.controls_panel._slot_btns.size() == c.actions.size() * 4, "panel has a button for every slot (%d)" % main.controls_panel._slot_btns.size())
 	main.controls_panel.close()
 	check(not main.controls_panel.visible, "panel closes")
+	# ---- launcher mobility, 180-degree aim, whole-building release, unsupported pieces
+	main.state = main.State.AIM
+	main.reset()
+	await frames(5)
+	main.move_launcher(120.0, -40.0)
+	await frames(2)
+	check(absf(main.launch_origin.x - 120.0) < 0.01 and absf(main.launch_origin.z + 40.0) < 0.01 and main.launch_origin.y >= 2.29, "launcher moved to (120, -40) and stands on what is there (y %.1f)" % main.launch_origin.y)
+	check(main.town.launcher_shift.distance_to(main.launch_origin - main.LAUNCH_HOME) < 0.01, "slingshot posts followed the launcher")
+	check(main.ragdoll.centre().distance_to(main.launch_origin) < 6.0, "the ragdoll is at the new launcher")
+	main.move_launcher(9999.0, 9999.0)
+	check(main.launch_origin.x <= main.MOVE_X_MAX + 0.01 and absf(main.launch_origin.z) < 130.0, "movement is clamped to the city")
+	main.move_launcher(0.0, 0.0)
+	main._apply_pull(Vector2(1.0, 0.5))
+	check(main.aim_dir.z < -0.95, "full side pull aims 90 degrees sideways (%s)" % str(main.aim_dir))
+	main._apply_pull(Vector2(-1.0, 0.5))
+	check(main.aim_dir.z > 0.95, "and the other way (%s)" % str(main.aim_dir))
+	main._elev_bias = 90.0
+	main._apply_pull(Vector2(0.0, 0.5))
+	check(main.aim_dir.y > 0.99, "elevation trim reaches straight up (%s)" % str(main.aim_dir))
+	main._elev_bias = -135.0
+	main._apply_pull(Vector2(0.0, 0.5))
+	check(main.aim_dir.y < -0.99, "and straight down (%s)" % str(main.aim_dir))
+	main._elev_bias = 0.0
+	var T = main.town
+	var shell = null
+	for p in T.pieces:
+		if main.Destruction.is_shell(p):
+			shell = p
+			break
+	if shell != null:
+		T.release(shell, Vector3(10, 4, 0))
+		var opened: bool = shell.has_meta("shell_open")
+		var live := 0
+		for cb in shell.get_meta("shell_cells", []):
+			if is_instance_valid(cb) and not cb.freeze:
+				live += 1
+		check(opened and live > 0 and not shell.visible, "releasing a whole building opens it and throws its cells (%d live), never a flying cube" % live)
+	var fl := RigidBody3D.new()
+	var cs := CollisionShape3D.new()
+	var bx := BoxShape3D.new()
+	bx.size = Vector3(2, 2, 2)
+	cs.shape = bx
+	fl.add_child(cs)
+	fl.collision_layer = 4
+	fl.collision_mask = 1 | 2 | 4
+	fl.freeze_mode = RigidBody3D.FREEZE_MODE_STATIC
+	fl.freeze = true
+	fl.position = Vector3(200, 40, 0)
+	fl.set_meta("mat", "masonry")
+	fl.set_meta("tough", 4.0)
+	fl.set_meta("rest", fl.position)
+	fl.set_meta("kind", "wall")
+	fl.set_meta("frozen_piece", true)
+	T.add_child(fl)
+	T.pieces.append(fl)
+	T.note_disturbance(fl.position)
+	await frames(40)
+	check(not fl.freeze, "a frozen piece left hanging in the air with no support is released and falls")
+	T._airborne(fl)
+	fl.freeze = true
+	check(T._airborne(fl), "airborne check sees open air under a piece")
 	# prompts follow the device
 	c.last_device = "pad"
 	check(c.prompt("fire") != "", "pad prompt: %s" % c.prompt("fire"))

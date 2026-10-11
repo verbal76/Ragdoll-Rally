@@ -181,9 +181,11 @@ func ground_y(x: float, z: float) -> float:
 func ground_normal(x: float, z: float) -> Vector3:
 	return terrain.normal(x, z) if terrain != null else Vector3.UP
 
+var launcher_shift := Vector3.ZERO           # how far the launcher has been moved from its home position
 var launcher_nodes: Array[Node3D] = []      # the slingshot's posts / bands (hidden when another launcher is selected)
 
 func _launcher() -> void:
+	launcher_shift = Vector3.ZERO
 	var wood := Color(0.55, 0.34, 0.18)
 	var base := _box_mesh(Vector3(3.0, 0.5, 4.4), wood)
 	base.position = Vector3(-0.2, 0.25, 0)
@@ -207,8 +209,16 @@ func _launcher() -> void:
 
 ## Stretch both bands from the pole tops to `pull` (world position of the pouch).
 func set_band(pull: Vector3) -> void:
-	_stretch(band_l, Vector3(POLE_TOP.x, POLE_TOP.y, -POLE_Z), pull)
-	_stretch(band_r, Vector3(POLE_TOP.x, POLE_TOP.y, POLE_Z), pull)
+	_stretch(band_l, launcher_shift + Vector3(POLE_TOP.x, POLE_TOP.y, -POLE_Z), pull)
+	_stretch(band_r, launcher_shift + Vector3(POLE_TOP.x, POLE_TOP.y, POLE_Z), pull)
+
+## Move the slingshot's posts and bands to follow the launcher (shift = new position minus home).
+func set_launcher_shift(shift: Vector3) -> void:
+	var d: Vector3 = shift - launcher_shift
+	for n in launcher_nodes:
+		if is_instance_valid(n) and n != band_l and n != band_r:
+			n.position += d
+	launcher_shift = shift
 
 func _stretch(mi: MeshInstance3D, a: Vector3, b: Vector3) -> void:
 	var len: float = maxf(a.distance_to(b), 0.05)
@@ -500,6 +510,7 @@ func dissolve(p: RigidBody3D, vel: Vector3) -> void:
 	p.set_meta("capped", true)
 	p.collision_layer = 0
 	p.visible = false
+	note_disturbance(p.global_position)
 	_spawn_debris(p.global_position, vel * 0.6, 4)
 	var id: int = p.get_instance_id()
 	if _fire_idx.has(id):
@@ -525,6 +536,9 @@ func _own_texture(p: RigidBody3D) -> void:
 func release(p: RigidBody3D, vel: Vector3) -> void:
 	if not p.freeze:
 		return
+	if Destruction.is_shell(p):
+		_release_shell(p, vel)                 # a building never flies off as one whole block: it breaks into its cells
+		return
 	if p.get_meta("capped", false):
 		return
 	if _live_cnt >= ACTIVE_HARD:                 # the simulation budget is spent: this piece becomes a puff of debris instead
@@ -535,12 +549,26 @@ func release(p: RigidBody3D, vel: Vector3) -> void:
 	if p.has_meta("shell_of"):
 		_own_texture(p)
 	p.freeze = false
+	note_disturbance(p.global_position)
 	p.set_meta("t_rel", Time.get_ticks_msec())
 	_live_cnt += 1
 	released_order.append(p)
 	p.linear_velocity = vel
 	p.angular_velocity = Vector3(randf_range(-4, 4), randf_range(-4, 4), randf_range(-4, 4))
 	piece_released.emit(p)
+
+## Opens a shell and throws its cells (budget-limited: the rest crumble to dust). Over the expansion budget it simply crumbles.
+func _release_shell(p: RigidBody3D, vel: Vector3) -> void:
+	if shells_open.size() >= Destruction.MAX_EXPANDED_SHELLS * 2:
+		dissolve(p, vel)
+		return
+	var cells: Array = Destruction.expand(self, p)
+	var k: int = 0
+	for cb in cells:
+		var c := cb as RigidBody3D
+		if is_instance_valid(c) and c.freeze:
+			release(c, vel * randf_range(0.6, 1.0) + Vector3(randf_range(-2.0, 2.0), randf_range(0.0, 3.0), randf_range(-2.0, 2.0)))
+			k += 1
 
 ## Called when the ragdoll hits `hit` at `speed` along `dir`. Returns released pieces.
 func smash(hit: RigidBody3D, hit_pos: Vector3, dir: Vector3, speed: float) -> Array[RigidBody3D]:
@@ -863,6 +891,7 @@ func make_ember(p: RigidBody3D) -> void:
 	_ignite_idx(int(_fire_idx[id]))
 
 func _physics_process(dt: float) -> void:
+	_support_tick(dt)
 	_process_hazards(dt)
 	_fire_acc += dt
 	if _fire_acc >= 0.25:
@@ -886,12 +915,60 @@ func active_released() -> int:
 			n += 1
 	return n
 
+## True when nothing is under the piece: a piece in the air must keep falling, never freeze there.
+func _airborne(p: RigidBody3D) -> bool:
+	if not is_inside_tree():
+		return false
+	var half: float = 0.6
+	if p.has_meta("half"):
+		half = (p.get_meta("half") as Vector3).y
+	var from: Vector3 = p.global_position
+	var q := PhysicsRayQueryParameters3D.create(from, from + Vector3(0, -(half + 0.7), 0), 1 | 4)
+	q.exclude = [p.get_rid()]
+	return get_world_3d().direct_space_state.intersect_ray(q).is_empty()
+
+var _recent_gaps: Array = []                       # [position, expires_ms]: where pieces were just removed (support may be gone)
+
+## Something was released / dissolved around `pos`: for a few seconds, frozen pieces nearby with nothing under them are let go.
+func note_disturbance(pos: Vector3) -> void:
+	_recent_gaps.append([pos, Time.get_ticks_msec() + 4000])
+	if _recent_gaps.size() > 24:
+		_recent_gaps.pop_front()
+
+var _unsup_t: float = 0.0
+func _support_tick(dt: float) -> void:
+	if _recent_gaps.is_empty():
+		return
+	_unsup_t += dt
+	if _unsup_t < 0.25:
+		return
+	_unsup_t = 0.0
+	var now: int = Time.get_ticks_msec()
+	_recent_gaps = _recent_gaps.filter(func(g): return int(g[1]) > now)
+	var freed: int = 0
+	for g in _recent_gaps:
+		var gp: Vector3 = g[0]
+		for p in pieces:
+			if freed >= 14:
+				return
+			if not is_instance_valid(p) or not p.freeze or Destruction.is_shell(p):
+				continue
+			if p.global_position.distance_to(gp) > 16.0 or p.get_meta("dissolved", false) or p.collision_layer == 0:
+				continue
+			if p.has_meta("shell_of") and not p.visible:
+				continue
+			if _airborne(p) and p.global_position.y > ground_y(p.global_position.x, p.global_position.z) + 1.0:
+				p.remove_meta("capped")
+				release(p, Vector3(randf_range(-1.0, 1.0), -0.5, randf_range(-1.0, 1.0)))
+				note_disturbance(p.global_position)
+				freed += 1
+
 ## Re-freeze the oldest settled released pieces so the simulation stays bounded.
 func enforce_active_cap() -> void:
 	# settled chunks stop being simulated after a while and stay where they fell (the aftermath persists, the physics cost does not)
 	var now_ms: int = Time.get_ticks_msec()
 	for p in released_order:
-		if is_instance_valid(p) and not p.freeze and now_ms - int(p.get_meta("t_rel", now_ms)) > 7000 and p.linear_velocity.length() < 0.5:
+		if is_instance_valid(p) and not p.freeze and now_ms - int(p.get_meta("t_rel", now_ms)) > 7000 and p.linear_velocity.length() < 0.5 and not _airborne(p):
 			p.set_meta("capped", true)
 			p.freeze = true
 	if active_released() <= ACTIVE_CAP:
@@ -899,7 +976,7 @@ func enforce_active_cap() -> void:
 	for p in released_order:
 		if active_released() <= ACTIVE_CAP:
 			break
-		if is_instance_valid(p) and not p.freeze and p.linear_velocity.length() < 1.0:
+		if is_instance_valid(p) and not p.freeze and p.linear_velocity.length() < 1.0 and not _airborne(p):
 			p.set_meta("capped", true)
 			p.freeze = true
 

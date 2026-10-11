@@ -14,7 +14,7 @@ const SelectUI := preload("res://scripts/select_ui.gd")
 
 enum State { AIM, FLIGHT, RESULT, SELECT }
 
-const LAUNCH_ORIGIN := Vector3(0.0, 2.3, 0.0)
+const LAUNCH_HOME := Vector3(0.0, 2.3, 0.0)     # where the launcher starts; it can be moved anywhere in the city (move_launcher)
 const PULL_LEN := 3.6
 const MIN_SPEED := 20.0           # pivot tuning: PULL -> RELEASE -> WHAM (classic G1/G2: 9.0 / 32.0, kept for the regression baseline)
 const MAX_SPEED := 50.0
@@ -79,6 +79,11 @@ var fires_started: int = 0
 var gore: bool = true
 var controls: Node = null                     # remappable input layer (controls.gd): keyboard + mouse + auto-detected gamepads
 var controls_panel: Control = null
+var _last_pull := Vector2.ZERO
+var _place_mode := false                       # overhead map: tap the city to put the launcher there
+var btn_move: Button
+var _elev_bias: float = 0.0                    # degrees added to the pull-back elevation (arc launchers); -90..+90 total
+var launch_origin: Vector3 = LAUNCH_HOME       # current launcher position (muzzle / pouch rest point)
 var _va_on := false                           # virtual aim (keys / stick) is driving the arc aim
 var _va_p := Vector2(0.0, 0.5)                # virtual pull (side, back) in the same units as the drag aim
 var _toast: Label = null
@@ -304,14 +309,14 @@ func _compute_aim_camera() -> void:
 		return
 	if md == "direct" or md == "charge":
 		var dir: Vector3 = Launchers.direct_dir(_aim_yaw, _aim_pitch)
-		_cam_aim_xf = Transform3D(Basis.IDENTITY, LAUNCH_ORIGIN - dir * 11.0 + Vector3(0, 3.2, 0)).looking_at(LAUNCH_ORIGIN + dir * 60.0 + Vector3(0, 1.0, 0), Vector3.UP)
+		_cam_aim_xf = Transform3D(Basis.IDENTITY, launch_origin - dir * 11.0 + Vector3(0, 3.2, 0)).looking_at(launch_origin + dir * 60.0 + Vector3(0, 1.0, 0), Vector3.UP)
 		_update_aim_basis()
 		return
 	var zs: float = -1.0 if view_right else 1.0           # camera sits on the +Z side (pull toward lower-left) or -Z side
 	var fh := Vector3(cos(deg_to_rad(30.0)), 0.0, -sin(deg_to_rad(30.0)) * zs)
 	var back: float = 26.0 + (14.0 if launcher_id == "catapult" else 0.0)
-	var pos: Vector3 = LAUNCH_ORIGIN - fh * back + Vector3(0, 13.0 + (8.0 if launcher_id == "catapult" else 0.0), 0)
-	_cam_aim_xf = Transform3D(Basis.IDENTITY, pos).looking_at(LAUNCH_ORIGIN + fh * 22.0 + Vector3(0, 0.5, 0), Vector3.UP)
+	var pos: Vector3 = launch_origin - fh * back + Vector3(0, 13.0 + (8.0 if launcher_id == "catapult" else 0.0), 0)
+	_cam_aim_xf = Transform3D(Basis.IDENTITY, pos).looking_at(launch_origin + fh * 22.0 + Vector3(0, 0.5, 0), Vector3.UP)
 	_update_aim_basis()
 
 func _update_aim_basis() -> void:
@@ -319,9 +324,9 @@ func _update_aim_basis() -> void:
 	var saved := cam.global_transform if cam else Transform3D.IDENTITY
 	if cam:
 		cam.global_transform = _cam_aim_xf
-		var o: Vector2 = cam.unproject_position(LAUNCH_ORIGIN)
-		_basis_back = (cam.unproject_position(LAUNCH_ORIGIN + Vector3(-6, 0, 0)) - o).normalized()
-		_basis_side = (cam.unproject_position(LAUNCH_ORIGIN + Vector3(0, 0, 6)) - o).normalized()
+		var o: Vector2 = cam.unproject_position(launch_origin)
+		_basis_back = (cam.unproject_position(launch_origin + Vector3(-6, 0, 0)) - o).normalized()
+		_basis_side = (cam.unproject_position(launch_origin + Vector3(0, 0, 6)) - o).normalized()
 		cam.global_transform = saved
 
 func _setup_dots() -> void:
@@ -565,6 +570,18 @@ func _build_controls_ui() -> void:
 		bc.offset_bottom = 276
 		bc.pressed.connect(controls_panel.open)
 		ui.add_child(bc)
+	btn_move = Button.new()
+	btn_move.text = "MOVE"
+	btn_move.focus_mode = Control.FOCUS_NONE
+	btn_move.add_theme_font_size_override("font_size", 24)
+	btn_move.custom_minimum_size = Vector2(190, 64)
+	btn_move.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	btn_move.offset_left = 16
+	btn_move.offset_top = 282 if not OS.has_feature("mobile") else 212
+	btn_move.offset_right = 206
+	btn_move.offset_bottom = btn_move.offset_top + 64
+	btn_move.pressed.connect(func(): set_place_mode(not _place_mode))
+	ui.add_child(btn_move)
 	_toast = _label(28, HORIZONTAL_ALIGNMENT_CENTER)
 	ui.add_child(_toast)
 	_toast.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
@@ -573,6 +590,7 @@ func _build_controls_ui() -> void:
 	_toast.offset_left = -400
 	_toast.offset_right = 400
 	_toast.visible = false
+	controls.device_changed.connect(func(_k): _apply_focus_mode())
 	controls.pad_connected.connect(func(n, c):
 		_show_toast(("Controller connected: " if c else "Controller disconnected: ") + n)
 		lbl_hint.text = _hint_text() if state == State.AIM else lbl_hint.text)
@@ -770,10 +788,14 @@ func _refresh_launchers() -> void:
 func open_launchers() -> void:
 	_refresh_launchers()
 	launcher_panel.visible = true
+	_apply_focus_mode()
+	_focus_menu()
 
 func open_upgrades() -> void:
 	_refresh_upgrades()
 	upgrade_panel.visible = true
+	_apply_focus_mode()
+	_focus_menu()
 
 func _refresh_upgrades() -> void:
 	(upgrade_panel.find_child("BankLabel", true, false) as Label).text = "Credits: %d  (earned from your throws, separate from score)" % bank
@@ -843,6 +865,9 @@ func _on_again() -> void:
 
 func reset() -> void:
 	_va_on = false
+	_place_mode = false
+	if btn_move:
+		btn_move.text = "MOVE"
 	Engine.time_scale = 1.0
 	slowmo = Rules.slowmo_new()
 	if is_instance_valid(ragdoll):
@@ -857,6 +882,7 @@ func reset() -> void:
 		if is_instance_valid(town):
 			remove_child(town)
 			town.queue_free()
+		launch_origin = LAUNCH_HOME
 		town = Town.new()
 		town.fx = fx
 		add_child(town)
@@ -867,6 +893,7 @@ func reset() -> void:
 		town.burned.connect(_on_burned)
 	town.fx = fx
 	fx.gore = gore
+	_sync_launcher_nodes()
 	fx.clear_all()
 	_apply_theme(env_id)
 	scoring = Scoring.new()
@@ -877,7 +904,7 @@ func reset() -> void:
 	fxp = {} if classic else Rules.effective(ch["stats"] as Dictionary, levels)
 	ragdoll = Ragdoll.new()
 	add_child(ragdoll)
-	ragdoll.build(Ragdoll.random_letter() if classic else str(ch["letter"]), Transform3D(Basis.IDENTITY, LAUNCH_ORIGIN), not classic, 0.0)
+	ragdoll.build(Ragdoll.random_letter() if classic else str(ch["letter"]), Transform3D(Basis.IDENTITY, launch_origin), not classic, 0.0)
 	if not classic:
 		ragdoll.apply_fx(fxp)
 	ragdoll.impact.connect(_on_impact)
@@ -956,7 +983,7 @@ func _apply_theme(env_id: String) -> void:
 ## Where the pouch sits for a given aim. Clamped above the ground: a steep full pull used to put the
 ## ragdoll BELOW the ground (G1/G2 bug: such launches went nowhere).
 func pouch_pos(dir: Vector3, power: float) -> Vector3:
-	var pos: Vector3 = LAUNCH_ORIGIN - dir * PULL_LEN * minf(power, 1.0) - dir * 0.8 * maxf(power - 1.0, 0.0)
+	var pos: Vector3 = launch_origin - dir * PULL_LEN * minf(power, 1.0) - dir * 0.8 * maxf(power - 1.0, 0.0)
 	pos.y = maxf(pos.y, 1.5)
 	return pos
 
@@ -1006,6 +1033,7 @@ func _apply_launcher() -> void:
 		_rig = LauncherRig.new()
 		add_child(_rig)
 		(_rig as LauncherRig).build(launcher_id)
+		(_rig as Node3D).position = launch_origin - LAUNCH_HOME
 	_charging = false
 	_charge = 0.0
 	_windup = -1.0
@@ -1060,16 +1088,17 @@ func _update_launcher_ui() -> void:
 
 ## Direct-fire aiming: finger movement turns the gun (yaw / pitch within the launcher's mechanical limits) and the camera sits behind the barrel.
 func _direct_move(dx: float, dy: float) -> void:
-	_aim_yaw = clampf(_aim_yaw + dx * 0.16 * (-1.0 if view_right else 1.0), -float(L["yaw"]), float(L["yaw"]))
-	_aim_pitch = clampf(_aim_pitch - dy * 0.10, float(L["pitch_min"]), float(L["pitch_max"]))
+	_aim_yaw = clampf(_aim_yaw + dx * 0.16 * (-1.0 if view_right else 1.0), -Launchers.AIM_YAW_MAX, Launchers.AIM_YAW_MAX)
+	_aim_pitch = clampf(_aim_pitch - dy * 0.10, Launchers.AIM_PITCH_MIN, Launchers.AIM_PITCH_MAX)
 	var dir: Vector3 = Launchers.direct_dir(_aim_yaw, _aim_pitch)
 	aim_dir = dir
 	aim_power = 1.0
 	_set_aim_pose(dir, 0.0)
 	if _rig:
 		(_rig as LauncherRig).set_aim(dir)
-	var cp: Vector3 = LAUNCH_ORIGIN - dir * 11.0 + Vector3(0, 3.2, 0)
-	_cam_aim_xf = Transform3D(Basis.IDENTITY, cp).looking_at(LAUNCH_ORIGIN + dir * 60.0 + Vector3(0, 1.0, 0), Vector3.UP)
+	var cp: Vector3 = launch_origin - dir * 11.0 + Vector3(0, 3.2, 0)
+	cp.y = maxf(cp.y, launch_origin.y - 1.0)
+	_cam_aim_xf = Transform3D(Basis.IDENTITY, cp).looking_at(launch_origin + dir * 60.0 + Vector3(0, 1.0, 0), Vector3.UP if absf(dir.y) < 0.97 else Vector3.RIGHT)
 	_update_direct_preview()
 
 ## Sight line + target marker. The marker is where the sight line meets the world; the round is aimed to ARRIVE there (the
@@ -1079,14 +1108,14 @@ func _update_direct_preview() -> void:
 		return
 	var dir: Vector3 = Launchers.direct_dir(_aim_yaw, _aim_pitch)
 	var space: PhysicsDirectSpaceState3D = get_viewport().world_3d.direct_space_state
-	var q := PhysicsRayQueryParameters3D.create(LAUNCH_ORIGIN + dir * 3.0, LAUNCH_ORIGIN + dir * 420.0, 1 | 4)
+	var q := PhysicsRayQueryParameters3D.create(launch_origin + dir * 3.0, launch_origin + dir * 420.0, 1 | 4)
 	var hit: Dictionary = space.intersect_ray(q)
 	var dist: float = 420.0
 	if not hit.is_empty():
-		dist = LAUNCH_ORIGIN.distance_to(hit["position"])
+		dist = launch_origin.distance_to(hit["position"])
 	var n_dots: int = _dots.size()
 	for i in n_dots:
-		_dots[i].global_position = LAUNCH_ORIGIN + dir * (6.0 + (dist - 6.0) * float(i) / float(n_dots))
+		_dots[i].global_position = launch_origin + dir * (6.0 + (dist - 6.0) * float(i) / float(n_dots))
 		_dots[i].visible = dist > 12.0
 	_ensure_marker()
 	if not hit.is_empty():
@@ -1104,11 +1133,11 @@ func _direct_launch_dir() -> Vector3:
 	if not is_inside_tree():
 		return sight
 	var space: PhysicsDirectSpaceState3D = get_viewport().world_3d.direct_space_state
-	var hit: Dictionary = space.intersect_ray(PhysicsRayQueryParameters3D.create(LAUNCH_ORIGIN + sight * 3.0, LAUNCH_ORIGIN + sight * 420.0, 1 | 4))
+	var hit: Dictionary = space.intersect_ray(PhysicsRayQueryParameters3D.create(launch_origin + sight * 3.0, launch_origin + sight * 420.0, 1 | 4))
 	if hit.is_empty():
 		return sight
 	var tp: Vector3 = hit["position"]
-	var d: Vector3 = tp - LAUNCH_ORIGIN
+	var d: Vector3 = tp - launch_origin
 	var horiz: float = Vector2(d.x, d.z).length()
 	var speed: float = Launchers.direct_speed(L, float(fxp.get("launch_mult", 1.0)))
 	var pitch: float = Launchers.compensate_pitch(L, speed, horiz, d.y, Rules.g_eff())
@@ -1151,10 +1180,10 @@ func _set_bullseye(screen: Vector2) -> void:
 	_validate_bullseye()
 
 func _validate_bullseye() -> void:
-	var d: float = Vector2(bullseye.x - LAUNCH_ORIGIN.x, bullseye.z - LAUNCH_ORIGIN.z).length()
-	var sol: Dictionary = Launchers.solve_lob(LAUNCH_ORIGIN, bullseye + Vector3(0, 1.0, 0), 66.0, Rules.g_eff())
+	var d: float = Vector2(bullseye.x - launch_origin.x, bullseye.z - launch_origin.z).length()
+	var sol: Dictionary = Launchers.solve_lob(launch_origin, bullseye + Vector3(0, 1.0, 0), 66.0, Rules.g_eff())
 	var vmax: float = Launchers.direct_speed(L, float(fxp.get("launch_mult", 1.0)))
-	bullseye_valid = d >= float(L["min_range"]) and d <= float(L["max_range"]) and bool(sol["ok"]) and float(sol["speed"]) <= vmax and bullseye.x > 0.0
+	bullseye_valid = d >= float(L["min_range"]) and d <= float(L["max_range"]) and bool(sol["ok"]) and float(sol["speed"]) <= vmax and bullseye.x > launch_origin.x
 	_ensure_marker()
 	_marker.visible = true
 	_marker.global_position = bullseye + Vector3(0, 0.3, 0)
@@ -1186,7 +1215,7 @@ func _tick_aim(dt: float) -> void:
 		trauma = maxf(trauma, 0.08 + 0.35 * _charge * _charge)       # the machine strains
 		cam.fov = lerpf(cam.fov, 56.0 - 12.0 * _charge, 1.0 - exp(-6.0 * dt))
 		if is_instance_valid(ragdoll) and _charge > 0.3:
-			var pos: Vector3 = LAUNCH_ORIGIN + aim_dir * (1.0 + 4.0 * randf())
+			var pos: Vector3 = launch_origin + aim_dir * (1.0 + 4.0 * randf())
 			if randf() < _charge * 0.6:
 				fx.sparks(pos, Vector3.UP)
 		lbl_hint.visible = true
@@ -1202,6 +1231,54 @@ func _is_aim_button(event: InputEvent) -> bool:
 	if event.device == InputEvent.DEVICE_ID_EMULATION:
 		return event.button_index == MOUSE_BUTTON_LEFT
 	return event.is_action("aim_drag") or (controls == null and event.button_index == MOUSE_BUTTON_LEFT)
+
+## D-pad / gamepad menu navigation: while a controller is in use every button can take focus (highlighted), the D-pad moves it, A presses it.
+## With keyboard / mouse the buttons take no focus, so Space / Enter keep firing.
+func _apply_focus_mode() -> void:
+	var pad: bool = controls != null and controls.last_device == "pad" and controls.has_pad()
+	for b in ui.find_children("*", "BaseButton", true, false):
+		(b as Control).focus_mode = Control.FOCUS_ALL if pad else Control.FOCUS_NONE
+		if pad and b is Button and not b.has_theme_stylebox_override("focus"):
+			var sb := StyleBoxFlat.new()
+			sb.bg_color = Color(1, 0.85, 0.2, 0.18)
+			sb.set_border_width_all(4)
+			sb.border_color = Color(1.0, 0.85, 0.2)
+			sb.set_corner_radius_all(8)
+			b.add_theme_stylebox_override("focus", sb)
+	for sl in ui.find_children("*", "Slider", true, false):
+		(sl as Control).focus_mode = Control.FOCUS_ALL if pad else Control.FOCUS_NONE
+	if not pad:
+		var fo: Control = get_viewport().gui_get_focus_owner()
+		if fo:
+			fo.release_focus()
+
+func _topmost_ui_root() -> Control:
+	if controls_panel and controls_panel.visible:
+		return controls_panel
+	if launcher_panel and launcher_panel.visible:
+		return launcher_panel
+	if upgrade_panel and upgrade_panel.visible:
+		return upgrade_panel
+	if state == State.SELECT and select_ui and select_ui.visible:
+		return select_ui
+	if state == State.RESULT and result_panel and result_panel.visible:
+		return result_panel
+	return null
+
+func _first_focusable(root: Node) -> Control:
+	for b in root.find_children("*", "BaseButton", true, false):
+		var c := b as Control
+		if c.is_visible_in_tree() and c.focus_mode == Control.FOCUS_ALL and not (b is BaseButton and (b as BaseButton).disabled):
+			return c
+	return null
+
+func _focus_menu() -> void:
+	if controls == null or controls.last_device != "pad":
+		return
+	var root_c: Control = _topmost_ui_root()
+	var target: Control = _first_focusable(root_c if root_c else ui)
+	if target:
+		target.grab_focus()
 
 func _any_panel_open() -> bool:
 	return (controls_panel != null and controls_panel.visible) or (launcher_panel != null and launcher_panel.visible) or (upgrade_panel != null and upgrade_panel.visible)
@@ -1259,10 +1336,14 @@ func _handle_actions(event: InputEvent) -> bool:
 		open_upgrades()
 	elif event.is_action("retry"):
 		reset()
+	elif event.is_action("place_launcher") and state == State.AIM:
+		set_place_mode(not _place_mode)
 	elif event.is_action("launcher_prev") and state == State.AIM:
 		_cycle_launcher(-1)
 	elif event.is_action("launcher_next") and state == State.AIM:
 		_cycle_launcher(1)
+	elif event.is_action("fire") and get_viewport().gui_get_focus_owner() != null and controls.last_device == "pad":
+		return false
 	elif event.is_action("fire"):
 		if state == State.RESULT:
 			reset()
@@ -1271,6 +1352,18 @@ func _handle_actions(event: InputEvent) -> bool:
 	else:
 		return false
 	return true
+
+## Shift the aim up / down (degrees). Arc launchers add it to the pull elevation; direct-fire ones tilt the barrel.
+func _trim_elevation(deg: float) -> void:
+	if state != State.AIM or ragdoll == null:
+		return
+	var m: String = str(L["mode"])
+	if m == "direct" or m == "charge":
+		_direct_move(0.0, -deg / 0.10)
+	elif m != "topdown":
+		_elev_bias = clampf(_elev_bias + deg, -135.0, 135.0)
+		if aim_power > 0.0:
+			_apply_pull(_last_pull)
 
 func _cycle_launcher(d: int) -> void:
 	var owned: Array = []
@@ -1299,6 +1392,73 @@ func _va_fire() -> void:
 			if aim_power >= MIN_POWER:
 				fire()
 
+const MOVE_X_MAX := 300.0
+
+func _sync_launcher_nodes() -> void:
+	var shift: Vector3 = launch_origin - LAUNCH_HOME
+	if is_instance_valid(town):
+		town.set_launcher_shift(shift)
+	if _rig != null:
+		(_rig as Node3D).position = shift
+
+## Put the launcher at (x, z): it stands on whatever is there (street, rooftop, hill). Works anywhere in the city.
+func move_launcher(x: float, z: float) -> void:
+	if not is_instance_valid(town) or state != State.AIM:
+		return
+	x = clampf(x, 0.0, MOVE_X_MAX)
+	z = clampf(z, -(Town.WORLD_Z - 10.0), Town.WORLD_Z - 10.0)
+	var top: float = town.ground_y(x, z)
+	if is_inside_tree():
+		var q := PhysicsRayQueryParameters3D.create(Vector3(x, 260.0, z), Vector3(x, top - 1.0, z), 1 | 4)
+		var hit: Dictionary = get_world_3d().direct_space_state.intersect_ray(q)
+		if not hit.is_empty():
+			top = maxf(top, float((hit["position"] as Vector3).y))
+	launch_origin = Vector3(x, top + 2.3, z)
+	_sync_launcher_nodes()
+	_compute_aim_camera()
+	var m: String = str(L["mode"])
+	if m == "topdown":
+		_validate_bullseye()
+	elif m == "direct" or m == "charge":
+		_direct_move(0.0, 0.0)
+	else:
+		_apply_pull(_last_pull) if aim_power > 0.0 else _set_aim_pose(Vector3.RIGHT, 0.0)
+	if not _place_mode:
+		cam.global_transform = _cam_aim_xf
+
+func set_place_mode(on: bool) -> void:
+	_place_mode = on and state == State.AIM
+	if btn_move:
+		btn_move.text = "MAP: ON" if _place_mode else "MOVE"
+	if _place_mode:
+		var vp: Vector2 = get_viewport().get_visible_rect().size
+		var aspect: float = maxf(vp.x / maxf(vp.y, 1.0), 1.2)
+		var h: float = maxf(150.0 / (tan(deg_to_rad(28.0)) * aspect), 130.0 / tan(deg_to_rad(28.0)))
+		cam.global_transform = Transform3D(Basis.IDENTITY, Vector3(150.0, h, 0.0)).looking_at(Vector3(150.0, 0.0, 0.0), Vector3(0, 0, -1))
+		cam.far = maxf(cam.far, h + 100.0)
+		lbl_hint.text = "TAP THE CITY TO MOVE THE LAUNCHER"
+		lbl_hint.visible = true
+	else:
+		cam.global_transform = _cam_aim_xf
+		lbl_hint.text = _hint_text()
+
+func _place_at_screen(pos: Vector2) -> void:
+	var o: Vector3 = cam.project_ray_origin(pos)
+	var nrm: Vector3 = cam.project_ray_normal(pos)
+	if absf(nrm.y) < 0.05:
+		return
+	var t: float = -o.y / nrm.y
+	var p: Vector3 = o + nrm * t
+	move_launcher(p.x, p.z)
+
+## Energy a hit needs to break a fixture that is static for the physics (everything that can be fired on gives way to a hard enough hit).
+func _static_break_energy(mat: String) -> float:
+	match mat:
+		"canvas": return 8.0
+		"wood", "roof", "": return 14.0
+		"metal": return 32.0
+	return 60.0
+
 func _toggle_fullscreen() -> void:
 	var m: int = DisplayServer.window_get_mode()
 	var full: bool = m == DisplayServer.WINDOW_MODE_FULLSCREEN or m == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
@@ -1321,9 +1481,24 @@ func _pad_input(dt: float) -> void:
 		return
 	if state != State.AIM or dragging or _charging or _windup >= 0.0:
 		return
+	if _place_mode:
+		return
+	var mv: Vector2 = Input.get_vector("move_left", "move_right", "move_fwd", "move_back", 0.3)
+	var pad_mode: bool = controls.last_device == "pad"
+	if pad_mode and not Input.is_action_pressed("move_mod"):
+		mv = Vector2.ZERO
+	if mv.length() > 0.01:
+		move_launcher(launch_origin.x - mv.y * 45.0 * dt, launch_origin.z + mv.x * 45.0 * dt)
+		return
+	var ev: float = 0.0 if (pad_mode and Input.is_action_pressed("move_mod")) else Input.get_axis("elev_down", "elev_up")
+	if absf(ev) > 0.2:
+		_trim_elevation(ev * 50.0 * dt)
 	var v: Vector2 = controls.aim_vector()
 	if v.length() < 0.001:
 		return
+	var fo2: Control = get_viewport().gui_get_focus_owner()
+	if fo2 != null and v.length() > 0.5:
+		fo2.release_focus()
 	match str(L["mode"]):
 		"direct", "charge":
 			_va_on = true
@@ -1342,6 +1517,21 @@ func _pad_input(dt: float) -> void:
 			_va_p.y = clampf(_va_p.y + v.y * 0.9 * dt, 0.0, OVERDRIVE_MAX)
 			_apply_pull(_va_p)
 
+func _input(event: InputEvent) -> void:
+	if controls == null or controls.is_listening():
+		return
+	if state == State.SELECT:
+		return
+	if event is InputEventJoypadButton and event.pressed and event.button_index in [JOY_BUTTON_DPAD_UP, JOY_BUTTON_DPAD_DOWN, JOY_BUTTON_DPAD_LEFT, JOY_BUTTON_DPAD_RIGHT]:
+		_apply_focus_mode()
+		if get_viewport().gui_get_focus_owner() == null or not get_viewport().gui_get_focus_owner().is_visible_in_tree():
+			_focus_menu()
+			get_viewport().set_input_as_handled()
+	elif event is InputEventJoypadButton and event.pressed and event.button_index == JOY_BUTTON_B and _topmost_ui_root() == null:
+		var fo: Control = get_viewport().gui_get_focus_owner()
+		if fo:
+			fo.release_focus()
+
 func _unhandled_input(event: InputEvent) -> void:
 	if _handle_actions(event):
 		get_viewport().set_input_as_handled()
@@ -1349,6 +1539,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	if state == State.SELECT:
 		return
 	if _any_panel_open():
+		return
+	if _place_mode:
+		if (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT) or (event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0):
+			_place_at_screen(event.position)
+		return
+	if event is InputEventMouseButton and event.pressed and state == State.AIM and (event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN):
+		var wd: float = 1.0 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -1.0
+		_trim_elevation(wd * 4.0)
 		return
 	if _is_aim_button(event):
 		if event.pressed:
@@ -1416,14 +1614,20 @@ func _update_aim() -> void:
 func _apply_pull(p: Vector2) -> void:
 	if p.length() > OVERDRIVE_MAX:
 		p = p.normalized() * OVERDRIVE_MAX
+	_last_pull = p
 	aim_power = p.length()                                # 0..1 = the old power range, 1..1.45 = overdrive
-	var up: float = clampf(p.y, 0.05, 1.0) * (1.6 if classic else _elev_gain())   # classic = G1/G2 elevation; pivot launches flatter and faster
-	var side: float = -clampf(p.x, -1.0, 1.0) * SIDE_GAIN
 	if classic:
-		aim_dir = Vector3(1.0, up, side).normalized()
+		var up: float = clampf(p.y, 0.05, 1.0) * 1.6
+		aim_dir = Vector3(1.0, up, -clampf(p.x, -1.0, 1.0) * SIDE_GAIN).normalized()
 	else:
-		# v13: the upward angle is soft-limited (Rules.soft_pitch_deg) so no gesture can fire a near-vertical rocket
-		aim_dir = Rules.launch_dir(Vector3(1.0, 0.0, side), up / sqrt(1.0 + side * side), float(L["pitch_max"]))
+		# full 180-degree hemisphere in front of the launcher, both ways. Side pull = yaw (+-90). Pull-back sets the familiar
+		# low elevation; the elevation trim (wheel / PgUp-PgDn / right stick) shifts it anywhere from straight down to straight up.
+		var xx: float = clampf(p.x, -1.0, 1.0)
+		var raw: float = rad_to_deg(atan(clampf(p.y, 0.05, 1.0) * _elev_gain()))
+		var base: float = Rules.soft_pitch_deg(raw, float(L["pitch_max"]))
+		var pitch: float = clampf(base + _elev_bias, Launchers.AIM_PITCH_MIN, Launchers.AIM_PITCH_MAX)
+		var yaw: float = -signf(xx) * Launchers.AIM_YAW_MAX * pow(absf(xx), 1.5)
+		aim_dir = Launchers.direct_dir(yaw, pitch)
 	_set_aim_pose(aim_dir, aim_power)
 	_update_preview()
 	bar_bg.visible = true
@@ -1492,7 +1696,7 @@ func fire() -> void:
 		"topdown":
 			if not bullseye_valid:
 				return
-			var sol: Dictionary = Launchers.solve_lob(LAUNCH_ORIGIN, bullseye + Vector3(0, 1.0, 0), 66.0, Rules.g_eff())
+			var sol: Dictionary = Launchers.solve_lob(launch_origin, bullseye + Vector3(0, 1.0, 0), 66.0, Rules.g_eff())
 			if not bool(sol["ok"]):
 				return
 			_fire_dir = sol["dir"]
@@ -1525,7 +1729,7 @@ func _launch_now() -> void:
 		_marker.visible = false
 	btn_fire.visible = false
 	bar_bg.visible = false
-	town.set_band(LAUNCH_ORIGIN)
+	town.set_band(launch_origin)
 	var spin := Vector3(randf_range(-6, 6), randf_range(-3, 3), randf_range(-8, 8))
 	if not classic:
 		# the pouch orientation sets the tumble: pulled-back angle -> forward/back flip, plus a corkscrew
@@ -1551,7 +1755,7 @@ func _launch_now() -> void:
 	sfx.play("launch", 0.0, randf_range(0.9, 1.1))
 	var fl: float = float(L["flash"])
 	if fl > 0.0:                                        # BOOM: muzzle flash, smoke, shockwave, recoil
-		var muzzle: Vector3 = LAUNCH_ORIGIN + aim_dir * 4.0
+		var muzzle: Vector3 = launch_origin + aim_dir * 4.0
 		fx.dust(muzzle, 1.6 * fl)
 		fx.shockwave(muzzle, 5.0 + 4.0 * fl)
 		_burst(muzzle)
@@ -1701,7 +1905,7 @@ func _on_impact_pivot(part: RigidBody3D, other: Node, speed: float, pos: Vector3
 			if town.decor_smashed % 10 == 0:
 				scoring.award("demo_%d" % town.decor_smashed, "DEMOLITION x%d" % town.decor_smashed, town.decor_smashed * 10, "Impacts", pos)
 	elif other is StaticBody3D and not other.has_meta("ground") and not other.has_meta("boundary") and not other.has_meta("glass") and not other.has_meta("decor") \
-			and ["canvas", "wood", "metal"].has(str(other.get_meta("mat", ""))) and eff * float(fxp["destruct_mult"]) * float(L["impact"]) >= (28.0 if str(other.get_meta("mat", "")) != "metal" else 55.0):
+			and not ["ground", "water", "trampoline"].has(str(other.get_meta("mat", ""))) and eff * float(fxp["destruct_mult"]) * float(L["impact"]) >= _static_break_energy(str(other.get_meta("mat", ""))):
 		# awnings, signs, poles, fences: light fixtures that are static for the physics but give way to a hard enough hit
 		if town.smash_static(other as StaticBody3D, vdir, speed):
 			scoring.add_smash(other.get_instance_id(), int(14.0 * Rules.destruct_score_mult(float(fxp["destruct_mult"]))), pos)
@@ -2180,7 +2384,7 @@ func _physics_process(dt: float) -> void:
 		_skid(dt)
 		_pivot_tick(dt)
 	var c: Vector3 = ragdoll.centre()
-	scoring.set_distance(c.x)
+	scoring.set_distance(c.x - launch_origin.x)
 	flip_angle += ragdoll.torso.angular_velocity.length() * dt
 	var want: int = mini(int(flip_angle / TAU), 8)
 	while scoring.flips < want:
@@ -2297,6 +2501,8 @@ func _finish() -> void:
 	btn_skip.visible = false
 	lbl_combo.visible = false
 	result_panel.visible = true
+	_apply_focus_mode()
+	_focus_menu()
 	_update_hud()
 	print("[launch] result total=%d avg=%.1fms worst=%.1fms" % [total, avg * 1000.0, frame_worst * 1000.0])
 
@@ -2377,7 +2583,7 @@ func _update_camera(dt: float) -> void:
 			cam.global_position = cam.global_position.lerp(pos, 1.0 - exp(-follow * dt))
 		cam.look_at(_cam_look, Vector3.UP)
 	else:
-		_cam_look = LAUNCH_ORIGIN
+		_cam_look = launch_origin
 		cam.global_transform = cam.global_transform.interpolate_with(_cam_aim_xf, 1.0 - exp(-10.0 * dt))
 	trauma = maxf(trauma - dt * 1.4, 0.0)
 	var t: float = Time.get_ticks_msec() * 0.001

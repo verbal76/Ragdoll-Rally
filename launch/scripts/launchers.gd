@@ -146,6 +146,11 @@ static func solve_lob(origin: Vector3, target: Vector3, pitch_deg: float, g: flo
 	return {"ok": true, "speed": v, "dir": dir, "t": dist / (v * cos(th))}
 
 ## Direction for a direct-fire gun at yaw/pitch (degrees; yaw 0 = +X, positive yaw toward +Z).
+## Every launcher can be aimed anywhere in the 180-degree hemisphere in front of it, horizontally and vertically.
+const AIM_YAW_MAX := 90.0
+const AIM_PITCH_MIN := -90.0
+const AIM_PITCH_MAX := 90.0
+
 static func direct_dir(yaw_deg: float, pitch_deg: float) -> Vector3:
 	var y: float = deg_to_rad(yaw_deg)
 	var p: float = deg_to_rad(pitch_deg)
@@ -156,7 +161,7 @@ static func aim_at(st: Dictionary, origin: Vector3, target: Vector3) -> Vector2:
 	var d: Vector3 = target - origin
 	var yaw: float = rad_to_deg(atan2(d.z, maxf(d.x, 0.001)))
 	var pitch: float = rad_to_deg(atan2(d.y, Vector2(d.x, d.z).length()))
-	return Vector2(clampf(yaw, -float(st["yaw"]), float(st["yaw"])), clampf(pitch, float(st["pitch_min"]), float(st["pitch_max"])))
+	return Vector2(clampf(yaw, -AIM_YAW_MAX, AIM_YAW_MAX), clampf(pitch, AIM_PITCH_MIN, AIM_PITCH_MAX))
 
 ## Impact-energy speed: speed above 60 m/s counts for a third, so a 200 m/s railgun round is overwhelmingly violent
 ## but not a thousand times a stock throw (energy is what pays for penetration, see Rules.punch_*).
@@ -189,8 +194,8 @@ static func sim_height(speed: float, pitch_deg: float, dist: float, gk: float, f
 
 ## Pitch (deg) at which the round passes `dy` metres above/below the muzzle at horizontal distance `dist`.
 static func compensate_pitch(st: Dictionary, speed: float, dist: float, dy: float, g: float) -> float:
-	var lo: float = float(st["pitch_min"]) - 6.0
-	var hi: float = float(st["pitch_max"]) + 12.0
+	var lo: float = AIM_PITCH_MIN
+	var hi: float = AIM_PITCH_MAX
 	for i in 28:
 		var mid: float = (lo + hi) * 0.5
 		if sim_height(speed, mid, dist, float(st["gravity_k"]), float(st["flat_t"]), g) < dy:
