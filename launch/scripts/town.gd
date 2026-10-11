@@ -1226,7 +1226,7 @@ func sprawl() -> void:
 			var cx: float = x + rng.randf_range(-2.0, 2.0)
 			var cz: float = z + rng.randf_range(-2.0, 2.0)
 			z += 16.5
-			if absf(cz) < 12.0 and cx < 50.0:
+			if absf(cz) < 26.0 and cx < 56.0:
 				continue                                          # the launch corridor stays open
 			if _is_reserved(cx, cz, 4.0):
 				continue
