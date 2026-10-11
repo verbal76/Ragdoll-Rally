@@ -1,13 +1,10 @@
 {
   "product": "Ragdoll Rally Launch",
   "file_stem": "Ragdoll-Rally-Launch",
-  "version": 17,
+  "version": 18,
   "deliver": true,
   "notes": [
-    "EXIT button (Windows): top-left on the game screen and on the results card. Press it twice to quit.",
-    "Bigger cities: every board now has extra blocks of buildings filling the open ground.",
-    "The city stays beat up: the next onslaught starts on the damaged city and it gets worse every run. It only starts over with the RESET CITY button, or automatically once it is 95% demolished. A CITY % DEMOLISHED counter shows how far along it is.",
-    "Railgun toned down: lower impact, and every flight loses energy as it breaks more, so one shot no longer clears half a city.",
-    "Everything from v16 is included: controller SELECT button (default A), modular-building towns, cars and pedestrians, movable launcher, 180 degree aim, Windows PC version."
+    "Controller fix: in the game view the left stick only aims. It no longer highlights and cycles the on-screen buttons, so artillery (and every other launcher) can be aimed with a controller.",
+    "Everything from v17 is included: EXIT button, bigger cities, the city staying beat up between onslaughts (RESET CITY), railgun balance, controller SELECT button, cars and pedestrians, Windows PC version."
   ]
 }

@@ -1,6 +1,6 @@
 # Releases and versions
 
-**Ragdoll Rally Launch v17 is the current public version. The next delivered build is v18.**
+**Ragdoll Rally Launch v18 is the current public version. The next delivered build is v19.**
 
 The newest playable file is always the GitHub **Latest** release, titled `Ragdoll Rally Launch v<N>`, containing `Ragdoll-Rally-Launch-v<N>.apk`.
 The rules and the delivery procedure are in the repository root `CLAUDE.md` (they are mandatory for every session).
@@ -54,3 +54,4 @@ v13 ships a dead (unreachable) selector string "LOCKED - not built yet": every e
 | **v15** | `v15` | modular-building towns everywhere, cars + pedestrians, movable launcher + 180-degree aim, mayhem/destruction pass, launchers, comic-ink look, Windows PC build |
 | **v16** | `v16` | controller SELECT button (default A, remappable) fixes menu selection; D-pad axis support |
 | **v17** | `v17` | EXIT button, bigger cities, persistent city damage (RESET CITY, auto-reset at 95%), railgun balance + per-flight energy fatigue |
+| **v18** | `v18` | controller fix: left stick no longer cycles menu buttons in the game view |
