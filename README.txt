@@ -1,3 +1,3 @@
 Windows internal test build (not a numbered release). Download the zip, extract, run Ragdoll-Rally-Launch.exe.
-sha256 69f0862d728b5ed8b4e1001c443cd24e1fa4037fe247b18e7644061468100737
-Source: claude/launch-gameplay-pivot @ b535e62
+sha256 cd25257b9c5d4c5d9cd78b683d10f51079883a01a741f8141fb00b8697e36126
+Source: claude/launch-gameplay-pivot @ d4586db
