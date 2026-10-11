@@ -24,14 +24,11 @@ func setup(c: Node) -> void:
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(dim)
 	var pc := PanelContainer.new()
-	pc.anchor_left = 0.5
-	pc.anchor_right = 0.5
-	pc.anchor_top = 0.5
-	pc.anchor_bottom = 0.5
-	pc.offset_left = -600
-	pc.offset_right = 600
-	pc.offset_top = -340
-	pc.offset_bottom = 340
+	pc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)      # fills the window with a margin: never wider than the screen
+	pc.offset_left = 50
+	pc.offset_right = -50
+	pc.offset_top = 36
+	pc.offset_bottom = -36
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.05, 0.07, 0.12, 0.97)
 	sb.set_corner_radius_all(20)
@@ -62,7 +59,8 @@ func setup(c: Node) -> void:
 	# bindings
 	var sc := ScrollContainer.new()
 	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	sc.custom_minimum_size = Vector2(1160, 380)
+	sc.custom_minimum_size = Vector2(300, 200)
+	sc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	vb.add_child(sc)
 	_grid = GridContainer.new()
@@ -78,12 +76,15 @@ func setup(c: Node) -> void:
 	for a in controls.actions:
 		var id: String = str(a["id"])
 		var nl := _label(str(a["label"]), 20)
-		nl.custom_minimum_size = Vector2(380, 0)
+		nl.custom_minimum_size = Vector2(300, 0)
+		nl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_grid.add_child(nl)
 		for d in ["kbm", "pad"]:
 			for i in controls.SLOTS:
 				var b := Button.new()
-				b.custom_minimum_size = Vector2(170, 40)
+				b.custom_minimum_size = Vector2(130, 40)
+				b.clip_text = true
 				b.add_theme_font_size_override("font_size", 18)
 				b.focus_mode = Control.FOCUS_ALL
 				var did: String = d

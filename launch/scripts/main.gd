@@ -8,6 +8,8 @@ const CamSafe := preload("res://scripts/cam_safe.gd")
 const Launchers := preload("res://scripts/launchers.gd")
 const Controls := preload("res://scripts/controls.gd")
 const ControlsPanel := preload("res://scripts/controls_panel.gd")
+const Graphics := preload("res://scripts/graphics.gd")
+const GraphicsPanel := preload("res://scripts/graphics_panel.gd")
 const LauncherRig := preload("res://scripts/launcher_rig.gd")
 const Fx := preload("res://scripts/fx.gd")
 const SelectUI := preload("res://scripts/select_ui.gd")
@@ -79,6 +81,10 @@ var fires_started: int = 0
 var gore: bool = true
 var controls: Node = null                     # remappable input layer (controls.gd): keyboard + mouse + auto-detected gamepads
 var controls_panel: Control = null
+var gfx: Node = null
+var graphics_panel: Control = null
+var btn_controls: Button
+var btn_gfx: Button
 var _last_pull := Vector2.ZERO
 var _place_mode := false                       # overhead map: tap the city to put the launcher there
 var btn_move: Button
@@ -196,6 +202,12 @@ func _ready() -> void:
 	controls = Controls.new()
 	controls.name = "Controls"
 	add_child(controls)
+	_build_theme()
+	if not OS.has_feature("mobile"):
+		gfx = Graphics.new()
+		gfx.name = "Graphics"
+		add_child(gfx)
+		gfx.setup.call_deferred(self)
 	_load_best()
 	_setup_environment()
 	sfx = Sfx.new()
@@ -421,12 +433,14 @@ func _setup_ui() -> void:
 	result_panel = PanelContainer.new()
 	result_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	result_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	result_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH     # content wider/taller than the box grows from the centre, never off the edge
+	result_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
 	result_panel.offset_left = -420
 	result_panel.offset_right = 420
 	result_panel.offset_top = -290
 	result_panel.offset_bottom = 290
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.05, 0.07, 0.12, 0.82)
+	sb.bg_color = Color(0.05, 0.07, 0.12, 0.97)
 	sb.set_corner_radius_all(24)
 	sb.set_content_margin_all(18)
 	result_panel.add_theme_stylebox_override("panel", sb)
@@ -436,7 +450,7 @@ func _setup_ui() -> void:
 	result_panel.add_child(vb)
 	lbl_result = _label(54, HORIZONTAL_ALIGNMENT_CENTER)
 	vb.add_child(lbl_result)
-	lbl_breakdown = _label(21, HORIZONTAL_ALIGNMENT_CENTER)
+	lbl_breakdown = _label(20, HORIZONTAL_ALIGNMENT_CENTER)
 	lbl_breakdown.modulate = Color(0.85, 0.92, 1.0)
 	vb.add_child(lbl_breakdown)
 	btn_again = Button.new()
@@ -451,9 +465,11 @@ func _setup_ui() -> void:
 	btn_upgrades.add_theme_font_size_override("font_size", 40)
 	btn_upgrades.focus_mode = Control.FOCUS_NONE
 	btn_upgrades.pressed.connect(open_upgrades)
-	var row := HBoxContainer.new()
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 14)
+	var row := HFlowContainer.new()                  # wraps to a second line instead of running off the panel
+	row.alignment = FlowContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("h_separation", 14)
+	row.add_theme_constant_override("v_separation", 10)
+	row.custom_minimum_size = Vector2(800, 0)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	btn_change = Button.new()
 	btn_change.text = "CHANGE"
@@ -537,6 +553,7 @@ func _setup_ui() -> void:
 	btn_ink.pressed.connect(func(): set_ink(not ink_on))
 	ui.add_child(btn_ink)
 	_build_controls_ui()
+	call_deferred("_raise_panels")
 	var btn_aim_l := Button.new()                  # in-aim launcher switch, top-left under the HUD line
 	btn_aim_l.text = "LAUNCHER"
 	btn_aim_l.focus_mode = Control.FOCUS_NONE
@@ -551,14 +568,119 @@ func _setup_ui() -> void:
 	ui.add_child(btn_aim_l)
 
 ## Controls panel, CONTROLS button (desktop only) and the controller-connected toast.
+## Modal panels: opaque backdrop, fill the window with a margin (never off screen), scroll when the content is taller.
+## One opaque, readable button style for every screen (the engine default is see-through).
+func _build_theme() -> void:
+	var th := Theme.new()
+	var mk := func(c: Color, border: Color = Color(0, 0, 0, 0), bw: int = 0) -> StyleBoxFlat:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = c
+		sb.set_corner_radius_all(10)
+		sb.set_border_width_all(bw)
+		sb.border_color = border
+		sb.content_margin_left = 14
+		sb.content_margin_right = 14
+		sb.content_margin_top = 8
+		sb.content_margin_bottom = 8
+		return sb
+	th.set_stylebox("normal", "Button", mk.call(Color(0.16, 0.23, 0.34, 1.0)))
+	th.set_stylebox("hover", "Button", mk.call(Color(0.22, 0.32, 0.47, 1.0)))
+	th.set_stylebox("pressed", "Button", mk.call(Color(0.10, 0.15, 0.24, 1.0)))
+	th.set_stylebox("disabled", "Button", mk.call(Color(0.11, 0.13, 0.18, 1.0)))
+	th.set_stylebox("focus", "Button", mk.call(Color(1.0, 0.85, 0.2, 0.25), Color(1.0, 0.85, 0.2), 4))
+	th.set_color("font_color", "Button", Color(1, 1, 1))
+	th.set_color("font_hover_color", "Button", Color(1, 1, 1))
+	th.set_color("font_disabled_color", "Button", Color(0.55, 0.6, 0.68))
+	get_window().theme = th
+
+func _fit_modal(panel: Control) -> void:
+	if panel == null:
+		return
+	for ch in panel.get_children():
+		if ch is ColorRect:
+			(ch as ColorRect).color = Color(0.02, 0.03, 0.06, 1.0)
+		elif ch is PanelContainer:
+			var pc := ch as PanelContainer
+			pc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			pc.offset_left = 40
+			pc.offset_right = -40
+			pc.offset_top = 28
+			pc.offset_bottom = -28
+			var sb := pc.get_theme_stylebox("panel") as StyleBoxFlat
+			if sb:
+				sb = sb.duplicate()
+				sb.bg_color = Color(0.07, 0.09, 0.15, 1.0)
+				pc.add_theme_stylebox_override("panel", sb)
+			if panel != controls_panel and pc.get_child_count() == 1 and pc.get_child(0) is VBoxContainer:
+				var vb := pc.get_child(0) as VBoxContainer
+				pc.remove_child(vb)
+				var sc := ScrollContainer.new()
+				sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+				pc.add_child(sc)
+				vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				sc.add_child(vb)
+
+var _was_modal := false
+var _hud_hide: Array = []
+var lbl_legend: Label
+
+## One overlay at a time: while a panel is open the HUD and the result card step aside, so nothing is drawn over anything else.
+func _modal_sync() -> void:
+	var modal: bool = (controls_panel != null and controls_panel.visible) or (launcher_panel != null and launcher_panel.visible) or (upgrade_panel != null and upgrade_panel.visible) or (graphics_panel != null and graphics_panel.visible)
+	if modal != _was_modal:
+		_was_modal = modal
+		for n in _hud_hide:
+			if is_instance_valid(n):
+				(n as CanvasItem).visible = not modal if n != lbl_hint else (not modal and state == State.AIM)
+		if menu:
+			menu.visible = not modal
+	if modal or state == State.RESULT:
+		for n in get_tree().get_nodes_in_group("score_popup"):
+			(n as CanvasItem).visible = false
+	if modal:
+		result_panel.visible = false
+	elif state == State.RESULT and not result_panel.visible:
+		result_panel.visible = true
+		_apply_focus_mode()
+		_focus_menu()
+	if lbl_legend:
+		var pad: bool = controls != null and controls.last_device == "pad" and controls.has_pad()
+		var menus: bool = modal or state == State.RESULT or state == State.SELECT
+		lbl_legend.visible = pad and menus
+		lbl_legend.text = "D-PAD: choose     A: select     B: back"
+
+func _raise_panels() -> void:
+	_hud_hide = [btn_ink, btn_move, btn_controls, btn_gfx, lbl_hint, lbl_stats, lbl_score, lbl_fps, btn_reset]
+	for n in [launcher_panel, upgrade_panel, controls_panel, graphics_panel]:
+		_fit_modal(n)
+	for n in [lbl_legend, result_panel, launcher_panel, upgrade_panel, controls_panel, graphics_panel]:
+		if n != null and n.get_parent() == ui:
+			ui.move_child(n, ui.get_child_count() - 1)
+	_apply_focus_mode()
+	_first_run_graphics()
+
+## First start on a desktop: show what was detected and picked, so the player can change it.
+func _first_run_graphics() -> void:
+	if gfx == null or graphics_panel == null:
+		return
+	for i in 4:
+		await get_tree().process_frame
+	if gfx.first_run and DisplayServer.get_name() != "headless":
+		graphics_panel.open()
+	for n in [result_panel, launcher_panel, upgrade_panel, controls_panel]:
+		if n != null and n.get_parent() == ui:
+			ui.move_child(n, ui.get_child_count() - 1)
+
 func _build_controls_ui() -> void:
 	controls_panel = ControlsPanel.new()
 	controls_panel.setup(controls)
 	controls_panel.quit_requested.connect(func(): get_tree().quit())
 	controls_panel.closed.connect(func(): lbl_hint.text = _hint_text())
 	ui.add_child(controls_panel)
+	controls_panel.set_meta("top", true)
 	if not OS.has_feature("mobile"):
 		var bc := Button.new()
+		btn_controls = bc
 		bc.text = "CONTROLS"
 		bc.focus_mode = Control.FOCUS_NONE
 		bc.add_theme_font_size_override("font_size", 24)
@@ -570,6 +692,29 @@ func _build_controls_ui() -> void:
 		bc.offset_bottom = 276
 		bc.pressed.connect(controls_panel.open)
 		ui.add_child(bc)
+		graphics_panel = GraphicsPanel.new()
+		graphics_panel.setup(gfx)
+		ui.add_child(graphics_panel)
+		btn_gfx = Button.new()
+		btn_gfx.text = "GRAPHICS"
+		btn_gfx.focus_mode = Control.FOCUS_NONE
+		btn_gfx.add_theme_font_size_override("font_size", 24)
+		btn_gfx.custom_minimum_size = Vector2(190, 64)
+		btn_gfx.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+		btn_gfx.offset_left = 16
+		btn_gfx.offset_top = 282
+		btn_gfx.offset_right = 206
+		btn_gfx.offset_bottom = 346
+		btn_gfx.pressed.connect(graphics_panel.open)
+		ui.add_child(btn_gfx)
+		lbl_legend = _label(24, HORIZONTAL_ALIGNMENT_CENTER)
+		ui.add_child(lbl_legend)
+		lbl_legend.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+		lbl_legend.offset_top = -44
+		lbl_legend.offset_bottom = -8
+		lbl_legend.offset_left = -300
+		lbl_legend.offset_right = 300
+		lbl_legend.visible = false
 	btn_move = Button.new()
 	btn_move.text = "MOVE"
 	btn_move.focus_mode = Control.FOCUS_NONE
@@ -577,7 +722,7 @@ func _build_controls_ui() -> void:
 	btn_move.custom_minimum_size = Vector2(190, 64)
 	btn_move.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
 	btn_move.offset_left = 16
-	btn_move.offset_top = 282 if not OS.has_feature("mobile") else 212
+	btn_move.offset_top = 352 if not OS.has_feature("mobile") else 212
 	btn_move.offset_right = 206
 	btn_move.offset_bottom = btn_move.offset_top + 64
 	btn_move.pressed.connect(func(): set_place_mode(not _place_mode))
@@ -1253,6 +1398,8 @@ func _apply_focus_mode() -> void:
 			fo.release_focus()
 
 func _topmost_ui_root() -> Control:
+	if graphics_panel and graphics_panel.visible:
+		return graphics_panel
 	if controls_panel and controls_panel.visible:
 		return controls_panel
 	if launcher_panel and launcher_panel.visible:
@@ -1281,7 +1428,7 @@ func _focus_menu() -> void:
 		target.grab_focus()
 
 func _any_panel_open() -> bool:
-	return (controls_panel != null and controls_panel.visible) or (launcher_panel != null and launcher_panel.visible) or (upgrade_panel != null and upgrade_panel.visible)
+	return (graphics_panel != null and graphics_panel.visible) or (controls_panel != null and controls_panel.visible) or (launcher_panel != null and launcher_panel.visible) or (upgrade_panel != null and upgrade_panel.visible)
 
 ## Keyboard / gamepad actions (remappable, see controls.gd).
 func _handle_actions(event: InputEvent) -> bool:
@@ -1290,7 +1437,9 @@ func _handle_actions(event: InputEvent) -> bool:
 	if event is InputEventMouseMotion or not event.is_pressed() or event.is_echo():
 		return false
 	if event.is_action("pause"):
-		if controls_panel.visible:
+		if graphics_panel != null and graphics_panel.visible:
+			graphics_panel.close()
+		elif controls_panel.visible:
 			controls_panel.close()
 		elif launcher_panel.visible:
 			launcher_panel.visible = false
@@ -1299,7 +1448,7 @@ func _handle_actions(event: InputEvent) -> bool:
 		elif state != State.SELECT:
 			controls_panel.open()
 		return true
-	if controls_panel.visible:
+	if controls_panel.visible or (graphics_panel != null and graphics_panel.visible):
 		return false
 	if event.is_action("fullscreen"):
 		_toggle_fullscreen()
@@ -1307,7 +1456,7 @@ func _handle_actions(event: InputEvent) -> bool:
 	if event.is_action("toggle_ink"):
 		set_ink(not ink_on)
 		return true
-	if state == State.SELECT:
+	if state == State.SELECT and get_viewport().gui_get_focus_owner() == null:
 		if event.is_action("ui_left") or event.is_action("aim_left"):
 			if select_ui.page == 0:
 				select_ui._step_char(-1)
@@ -1328,6 +1477,8 @@ func _handle_actions(event: InputEvent) -> bool:
 		else:
 			return false
 		return true
+	if state == State.SELECT:
+		return false
 	if launcher_panel.visible or upgrade_panel.visible:
 		return false
 	if event.is_action("open_launchers"):
@@ -1519,8 +1670,6 @@ func _pad_input(dt: float) -> void:
 
 func _input(event: InputEvent) -> void:
 	if controls == null or controls.is_listening():
-		return
-	if state == State.SELECT:
 		return
 	if event is InputEventJoypadButton and event.pressed and event.button_index in [JOY_BUTTON_DPAD_UP, JOY_BUTTON_DPAD_DOWN, JOY_BUTTON_DPAD_LEFT, JOY_BUTTON_DPAD_RIGHT]:
 		_apply_focus_mode()
@@ -2332,6 +2481,7 @@ func _on_awarded(label: String, pts: int, world_pos: Vector3) -> void:
 	_popups += 1
 	_pop_slot = (_pop_slot + 1) % 6
 	var l := _label(30, HORIZONTAL_ALIGNMENT_CENTER)
+	l.add_to_group("score_popup")
 	ui.add_child(l)
 	l.text = "%s +%d" % [label, pts]
 	l.add_theme_color_override("font_color", Color(1.0, 0.92, 0.3))
@@ -2486,18 +2636,24 @@ func _finish() -> void:
 		best = total
 		_save_best()
 	lbl_result.text = ("NEW BEST %d" if new_best else "SCORE %d") % total
-	var lines: Array[String] = scoring.summary_lines()
+	var sl: Array[String] = scoring.summary_lines()
+	var lines: Array[String] = []
+	var ci: int = 0
+	while ci < sl.size():                          # two score lines per row so a big run still fits the panel
+		lines.append(sl[ci] if ci + 1 >= sl.size() else "%s      %s" % [sl[ci], sl[ci + 1]])
+		ci += 2
 	var avg: float = frame_sum / maxf(frame_n, 1)
 	var hit_names: Array[String] = []
 	for t in town.targets:
 		if scoring.keys.has(str(t["key"])):
 			hit_names.append(str(t["name"]))
-	lines.append("Targets: %d/%d  %s" % [hit_names.size(), town.targets.size(), ", ".join(hit_names)])
-	lines.append("frames avg %.1fms worst %.1fms" % [avg * 1000.0, frame_worst * 1000.0])
+	var hn: String = ", ".join(hit_names.slice(0, 4)) + (" +%d" % (hit_names.size() - 4) if hit_names.size() > 4 else "")
+	lines.append("Targets: %d/%d  %s" % [hit_names.size(), town.targets.size(), hn])
 	if not classic:
 		lines.append("+%d CREDITS banked for upgrades (score and credits are separate)" % last_credit)
 		lines.append("Skips %d   Ricochets %d   Limbs lost %d   Fires %d   Best combo x%d" % [skips, ricochets, limbs_lost, fires_started, scoring.best_combo])
 	lbl_breakdown.text = "\n".join(lines)
+	lbl_hint.visible = false
 	btn_skip.visible = false
 	lbl_combo.visible = false
 	result_panel.visible = true
@@ -2507,6 +2663,7 @@ func _finish() -> void:
 	print("[launch] result total=%d avg=%.1fms worst=%.1fms" % [total, avg * 1000.0, frame_worst * 1000.0])
 
 func _process(dt: float) -> void:
+	_modal_sync()
 	_pad_input(dt)
 	if _toast != null and _toast_t > 0.0:
 		_toast_t -= dt
