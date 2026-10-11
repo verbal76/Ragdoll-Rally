@@ -240,7 +240,7 @@ func _run() -> void:
 		main.set_view_right(side)
 		await frames(2)
 		main.cam.global_transform = main._cam_aim_xf
-		var lo: Vector2 = _screen(main, main.LAUNCH_ORIGIN)
+		var lo: Vector2 = _screen(main, main.launch_origin)
 		var framed := lo.y < 0.74 and lo.x > 0.2 and lo.x < 0.8
 		for ang in [-0.7, 0.0, 0.7]:
 			_aim(main, 1.45 * cos(ang), 1.45 * sin(ang))

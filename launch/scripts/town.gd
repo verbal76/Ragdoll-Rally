@@ -998,6 +998,7 @@ func _filler() -> void:
 
 ## Fast reset: put every piece/prop back where it was instead of rebuilding ~400 nodes.
 func reset_in_place() -> void:
+	_recent_gaps.clear()
 	Destruction.restore_all(self)
 	for p in pieces:
 		if p.get_meta("dissolved", false):

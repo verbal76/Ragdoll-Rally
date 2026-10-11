@@ -292,6 +292,11 @@ static func punch(t, hit: RigidBody3D, pos: Vector3, dir: Vector3, effk: float, 
 			if effk >= tough * 1.4:
 				t.release(p, (p.global_position - pos).normalized() * 3.0 + d * effk * push * 0.25 + Vector3(0, 2.0, 0))
 				rel.append(p)
+	for p in rel.duplicate():                           # a whole building released this way was opened into cells: report the cells that fly
+		if p.has_meta("shell_open"):
+			for cb in (p.get_meta("shell_cells", []) as Array):
+				if is_instance_valid(cb) and not (cb as RigidBody3D).freeze and not rel.has(cb):
+					rel.append(cb)
 	var fell: Array = collapse(t, rel)
 	rel.append_array(fell)
 	res["collapsed"] = fell.size()
