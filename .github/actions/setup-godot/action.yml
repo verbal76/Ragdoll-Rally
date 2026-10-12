@@ -1,0 +1,32 @@
+name: Set up Godot 4.7.1
+description: Installs the pinned Godot 4.7.1 editor and (optionally) the export templates for the requested platforms. Needs no secrets.
+inputs:
+  templates:
+    description: 'Space-separated template globs inside the .tpz, e.g. "templates/windows_*"; empty = editor only'
+    default: ''
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v4
+      with:
+        path: ~/godot-dl
+        key: godot-4.7.1-dl-v1
+    - shell: bash
+      env:
+        GODOT_BASE: https://github.com/godotengine/godot/releases/download/4.7.1-stable
+        TEMPLATES: ${{ inputs.templates }}
+      run: |
+        set -eu
+        mkdir -p ~/godot-dl && cd ~/godot-dl
+        [ -f godot.zip ] || curl -fsSL -o godot.zip "$GODOT_BASE/Godot_v4.7.1-stable_linux.x86_64.zip"
+        unzip -o -q godot.zip
+        sudo install -m 755 Godot_v4.7.1-stable_linux.x86_64 /usr/local/bin/godot
+        if [ -n "$TEMPLATES" ]; then
+          [ -f templates.tpz ] || curl -fsSL -o templates.tpz "$GODOT_BASE/Godot_v4.7.1-stable_export_templates.tpz"
+          T="$HOME/.local/share/godot/export_templates/4.7.1.stable"
+          mkdir -p "$T"
+          # shellcheck disable=SC2086
+          unzip -o -j -q templates.tpz $TEMPLATES 'templates/version.txt' -d "$T"
+          cat "$T/version.txt"
+        fi
+        godot --version

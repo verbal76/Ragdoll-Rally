@@ -1,0 +1,33 @@
+name: Lightweight checks
+
+# Pull-request validation only: static policy and Python tests, about a minute, read-only, no secrets, builds nothing, publishes nothing.
+# (The full Godot suites run locally via tools/local_validate.sh and inside the manual Coordinated build.)
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: pip install -q pyyaml
+      - name: Engineering policy
+        run: python3 tools/check_policy.py
+      - name: OTA publisher / native gates and coordinated-build tests
+        run: |
+          python3 -W ignore launch/tools/test_ota_tools.py
+          python3 -W ignore tools/test_coordinated.py
+      - name: Workflow lint (actionlint)
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint

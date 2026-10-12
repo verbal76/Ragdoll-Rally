@@ -2,7 +2,6 @@
   "product": "Ragdoll Rally Launch",
   "file_stem": "Ragdoll-Rally-Launch",
   "version": 19,
-  "deliver": false,
   "notes": [
     "Steam Deck / Steam Machine: controller-first prompts, automatic Deck graphics preset, lighter comic ink and adaptive resolution.",
     "Safer updates: the app can never be replaced by an older over-the-air payload, and obsolete or stuck updates are discarded automatically.",

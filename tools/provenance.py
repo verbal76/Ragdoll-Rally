@@ -35,12 +35,19 @@ def tool_version(cmd):
     except Exception:
         return "unknown"
 
+def on_authoritative_line(sha, branch, auth):
+    """On the authoritative branch itself, or (detached CI checkout of an exact SHA) an ancestor of its remote tip."""
+    if branch == auth:
+        return True
+    r = subprocess.run(["git", "-C", ROOT, "merge-base", "--is-ancestor", sha, "origin/" + auth], capture_output=True)
+    return r.returncode == 0
+
 def check_tree(allow_dirty):
     sha, branch, dirty = tree_state()
     auth = release().get("authoritative_branch", "")
     ok = True
-    if branch != auth:
-        print("provenance: HEAD is on '%s', the authoritative branch is '%s'. Platform builds must come from the authoritative line." % (branch, auth))
+    if not on_authoritative_line(sha, branch, auth):
+        print("provenance: HEAD (%s) is on '%s', which is not part of the authoritative line '%s'. Platform builds must come from it." % (sha[:12], branch, auth))
         ok = False
     if dirty and not allow_dirty:
         print("provenance: the working tree has uncommitted changes; a build must come from an exact, committed SHA (ALLOW_DIRTY=1 marks it internal).")
@@ -51,9 +58,10 @@ def write(a):
     sha, branch, dirty = tree_state()
     rel = release()
     godot = os.environ.get("GODOT", "godot")
+    build = int(os.environ.get("BUILD_NUMBER") or rel["version"])
     info = {
         "source_sha": sha, "source_branch": branch, "working_tree_dirty": dirty,
-        "version": rel["version"], "public_version": "v%s" % rel["version"], "delivered": bool(rel.get("deliver")),
+        "build_number": build, "public_version": "Build %d" % build,
         "platform": a.platform, "build_config": a.config,
         "engine": tool_version([godot, "--version"]),
         "built_at_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

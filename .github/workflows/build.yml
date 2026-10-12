@@ -1,0 +1,313 @@
+name: Coordinated build
+
+# THE one build/release workflow (Hot Attic Games standard v2.0, sections 5-9; docs/RELEASES.md).
+# MANUAL ONLY: it has no push, pull_request, tag or schedule trigger, so source pushes, merges, tags and version edits can never start it.
+# One native build number + one exact source SHA -> the selected platform artifacts -> (optionally) ONE GitHub Release.
+# Nothing here publishes an OTA, uploads to Steam or Google Play.
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Platforms to build'
+        type: choice
+        required: true
+        options: [android, windows, linux, all]
+        default: all
+      source_sha:
+        description: 'Exact approved commit (full 40-character SHA on the authoritative line)'
+        type: string
+        required: true
+      build_number:
+        description: 'Coordinated native build number (must be new and higher than every published number)'
+        type: string
+        required: true
+      destination:
+        description: 'github_releases creates the release; local_only keeps the verified files as a private workflow artifact (14 days)'
+        type: choice
+        required: true
+        options: [local_only, github_releases]
+        default: local_only
+
+concurrency:
+  group: coordinated-build-${{ inputs.build_number }}
+  cancel-in-progress: false      # never kill a run that may be mid-release
+
+permissions:
+  contents: read                 # every job is read-only except the final release job
+
+env:
+  PLATFORM: ${{ inputs.platform }}
+  SOURCE_SHA: ${{ inputs.source_sha }}
+  BUILD_NUMBER: ${{ inputs.build_number }}
+  DESTINATION: ${{ inputs.destination }}
+  SIGNING_CERT_SHA256: 32a3988d6348d9eedcc95b40202d5f35e3b0a4d96ac042319de0f7ca7e3dc15b   # public fingerprint of the committed throwaway debug key (no secret exists)
+
+jobs:
+  # ~15 s, no secrets, no build tools: every request is checked BEFORE any expensive work starts.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      android: ${{ steps.p.outputs.android }}
+      desktop_matrix: ${{ steps.p.outputs.desktop_matrix }}
+      platforms: ${{ steps.p.outputs.platforms }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Dispatch ref must be the authoritative branch
+        run: |
+          AUTH=$(python3 -c "import json;print(json.load(open('release/release.json'))['authoritative_branch'])")
+          [ "$GITHUB_REF_NAME" = "$AUTH" ] || { echo "::error::this workflow must be dispatched from '$AUTH' (got '$GITHUB_REF_NAME')"; exit 1; }
+      - name: Validate the request (SHA format and lineage, build-number uniqueness)
+        run: python3 tools/coordinated.py validate-request --platform "$PLATFORM" --source-sha "$SOURCE_SHA" --build-number "$BUILD_NUMBER" --destination "$DESTINATION"
+      - name: Refuse a reused release identifier (remote release or tag)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "build-$BUILD_NUMBER" >/dev/null 2>&1 || [ -n "$(git ls-remote --tags origin "refs/tags/build-$BUILD_NUMBER" "refs/tags/v$BUILD_NUMBER")" ]; then
+            echo "::error::build number $BUILD_NUMBER already has a release or tag"; exit 1
+          fi
+      - id: p
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          p = os.environ["PLATFORM"]
+          sel = ["android", "windows", "linux"] if p == "all" else [p]
+          print("android=%s" % str("android" in sel).lower())
+          print("desktop_matrix=%s" % json.dumps([x for x in sel if x != "android"]))
+          print("platforms=%s" % ",".join(sel))
+          PY
+
+  # Same gate the owner runs locally (tools/local_validate.sh full): every Godot suite, OTA safety, saves, glyphs, policy, branch ledger.
+  validate:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-godot
+      - name: Full local validation on the exact source
+        run: |
+          [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ]
+          GITHUB_REF_NAME=$(python3 -c "import json;print(json.load(open('release/release.json'))['authoritative_branch'])") GODOT=godot tools/local_validate.sh full
+      - name: Physics regression vs Godot 4.4.1 reference
+        run: |
+          godot --headless --path launch -s tests/physics_baseline.gd -- "$GITHUB_WORKSPACE/physics_ci.json"
+          python3 launch/tools/physics_compare.py docs/physics/baseline_godot_4.4.1.json physics_ci.json
+
+  android:
+    needs: [plan, validate]
+    if: needs.plan.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GODOT_TPL_DIR: .local/share/godot/export_templates/4.7.1.stable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: ./.github/actions/setup-godot
+        with:
+          templates: 'templates/android_*'
+      - name: Android SDK packages (API 36, build-tools 36.1.0, NDK r29)
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platform-tools" "platforms;android-36" "build-tools;36.1.0" "ndk;29.0.14206865" "cmdline-tools;latest" > /dev/null
+      - name: Godot editor settings (committed throwaway debug keystore; no secrets involved)
+        run: |
+          mkdir -p ~/.config/godot
+          cat > ~/.config/godot/editor_settings-4.7.tres <<EOS
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          export/android/debug_keystore = "$GITHUB_WORKSPACE/launch/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          export/android/force_system_user = false
+          export/android/shutdown_adb_on_exit = true
+          EOS
+          sed -i 's/^          //' ~/.config/godot/editor_settings-4.7.tres
+      - name: Install Android Gradle build template
+        run: |
+          T="$HOME/$GODOT_TPL_DIR"
+          mkdir -p launch/android/build
+          unzip -q "$T/android_source.zip" -d launch/android/build
+          echo "4.7.1.stable" > launch/android/.build_version
+          touch launch/android/build/.gdignore
+      - name: Set version (versionName "Build N"; versionCode stays the CI run number)
+        run: |
+          sed -i "s/^version\/code=.*/version\/code=${{ github.run_number }}/; s/^version\/name=.*/version\/name=\"Build $BUILD_NUMBER\"/" launch/export_presets.cfg
+          grep -E '^version/' launch/export_presets.cfg
+      - name: OTA channel safety gate (the live channel must not downgrade this native build)
+        if: env.DESTINATION == 'github_releases'
+        run: |
+          curl -fsSL -o live.json "https://github.com/${{ github.repository }}/releases/download/launch-ota-channel-g3/manifest.json" || rm -f live.json
+          python3 launch/tools/ota_tools.py native-gate --live live.json --epoch "$(python3 launch/tools/ota_tools.py epoch)" --compat "$(python3 launch/tools/ota_tools.py fingerprint)"
+      - name: Write build identity (build_info.json)
+        run: |
+          CFG=launch/android/build/config.gradle
+          TARGET=$(sed -n "s/^ *targetSdk *: *\([0-9]*\).*/\1/p" $CFG | head -1)
+          MIN=$(sed -n "s/^ *minSdk *: *\([0-9]*\).*/\1/p" $CFG | head -1)
+          COMPILE=$(sed -n "s/^ *compileSdk *: *\([0-9]*\).*/\1/p" $CFG | head -1)
+          test "$TARGET" = "36"
+          KIND=release; [ "$DESTINATION" = "local_only" ] && KIND=internal
+          python3 launch/tools/ota_tools.py build-info --out launch/build_info.json \
+            --version-name "Build $BUILD_NUMBER" --public-version "Build $BUILD_NUMBER" --product-name "Ragdoll Rally" --build-kind "$KIND" \
+            --version-code ${{ github.run_number }} --sha "$SOURCE_SHA" \
+            --run ${{ github.run_number }} --channel g3 --epoch "$(python3 launch/tools/ota_tools.py epoch)" --target-sdk "$TARGET" --min-sdk "$MIN" --compile-sdk "$COMPILE" \
+            --generation "Godot 4.7.1, Gradle build, Android API 36" \
+            --manifest-url "https://github.com/${{ github.repository }}/releases/download/launch-ota-channel-g3/manifest.json" \
+            --signing "debug (throwaway key; not Play-ready)" --build-type debug
+          cat launch/build_info.json
+      - name: Import project
+        run: godot --headless --path launch --import || true
+      - name: Export APK (Gradle)
+        run: |
+          mkdir -p build stage
+          godot --headless --path launch --export-debug "Android" "../build/rr.apk"
+          test -s build/rr.apk
+          NAME=$(python3 tools/coordinated.py names --build "$BUILD_NUMBER" | python3 -c "import json,sys;print(json.load(sys.stdin)['android'])")
+          cp build/rr.apk "stage/$NAME"
+          echo "APK_NAME=$NAME" >> "$GITHUB_ENV"
+      - name: Verify APK artifact (identity, SDK, signing, native libs, 16 KB)
+        run: |
+          set -o pipefail
+          python3 launch/tools/verify_apk.py build/rr.apk \
+            --package com.hotatticgames.ragdollrally.launch --version-name "Build $BUILD_NUMBER" \
+            --version-code ${{ github.run_number }} --min-sdk 24 --target-sdk 36 \
+            --cert-sha256 "$SIGNING_CERT_SHA256" --json-out build/apk_report.json | tee build/apk_report.txt
+          python3 - <<'PY'
+          import json
+          r = json.load(open("build/apk_report.json"))
+          assert "android.permission.INTERNET" in r["permissions"], r["permissions"]
+          assert r["abis"] == ["arm64-v8a"], r["abis"]
+          PY
+      - name: Inspect APK content (cities, studio logo, no test cheat, governor/boundary code, icon)
+        run: |
+          set -o pipefail
+          pip install -q zstandard
+          python3 launch/tools/inspect_apk_content.py build/rr.apk --json-out build/apk_content.json | tee build/apk_content.txt
+      - name: Provenance (source SHA, build number, checksum)
+        run: python3 tools/provenance.py write --platform android-arm64 --config debug-signed --artifact "stage/$APK_NAME" --out "stage/$APK_NAME.provenance.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ inputs.build_number }}-android
+          path: stage/
+          retention-days: 7
+
+  desktop:
+    needs: [plan, validate]
+    if: needs.plan.outputs.desktop_matrix != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        platform: ${{ fromJSON(needs.plan.outputs.desktop_matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-godot
+        with:
+          templates: 'templates/windows_* templates/linux_*'
+      - name: Build and package (no Android credentials exist in this job)
+        env:
+          PLAT: ${{ matrix.platform }}
+        run: |
+          [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ]
+          GODOT=godot tools/build.sh --platform "$PLAT" --out out
+          mkdir -p stage
+          NAME=$(python3 tools/coordinated.py names --build "$BUILD_NUMBER" | PLAT="$PLAT" python3 -c "import json,os,sys;print(json.load(sys.stdin)[os.environ['PLAT']])")
+          ls -la out/"$PLAT"
+          cp "out/$PLAT/$NAME" "out/$PLAT/$NAME.provenance.json" stage/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ inputs.build_number }}-${{ matrix.platform }}
+          path: stage/
+          retention-days: 7
+
+  # Gathers every selected artifact, verifies one SHA / one build number / checksums, writes build-manifest.json + checksums.sha256.
+  # Runs only when EVERY selected platform succeeded: a partial set can never reach a release or be presented as complete.
+  assemble:
+    needs: [plan, validate, android, desktop]
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.validate.result == 'success'
+      && (needs.plan.outputs.android != 'true' || needs.android.result == 'success')
+      && (needs.plan.outputs.desktop_matrix == '[]' || needs.desktop.result == 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: build-${{ inputs.build_number }}-*
+          path: set
+          merge-multiple: true
+      - name: Manifest + checksums, then verify the whole set
+        env:
+          PLATFORMS: ${{ needs.plan.outputs.platforms }}
+        run: |
+          ls -la set
+          python3 tools/coordinated.py manifest --dir set --build "$BUILD_NUMBER" --sha "$SOURCE_SHA" --platforms "$PLATFORMS" --destination "$DESTINATION"
+          python3 tools/coordinated.py verify --dir set
+          (cd set && sha256sum -c checksums.sha256)
+          cat set/build-manifest.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ inputs.build_number }}-release-set
+          path: set/
+          retention-days: 14        # local_only retrieval: Actions UI or `gh run download <run-id> -n build-N-release-set` (repository readers only; not a public release)
+
+  release:
+    needs: [plan, assemble]
+    if: ${{ inputs.destination == 'github_releases' && needs.assemble.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write            # the ONLY job that can write to the repository (creates the release and its tag)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-${{ inputs.build_number }}-release-set
+          path: set
+      - name: Re-verify and re-check the identifiers immediately before publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/coordinated.py verify --dir set
+          python3 tools/coordinated.py validate-request --platform "$PLATFORM" --source-sha "$SOURCE_SHA" --build-number "$BUILD_NUMBER" --destination github_releases
+          if gh release view "build-$BUILD_NUMBER" >/dev/null 2>&1 || [ -n "$(git ls-remote --tags origin "refs/tags/build-$BUILD_NUMBER")" ]; then
+            echo "::error::build-$BUILD_NUMBER appeared while this run was building; refusing to overwrite"; exit 1
+          fi
+      - name: Create the release (tag build-N at the exact source SHA)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 release/make_notes.py set notes.md
+          ARGS=()
+          while IFS= read -r f; do ARGS+=("set/$f#$f"); done < <(python3 -c "import json;[print(a['file']) for a in json.load(open('set/build-manifest.json'))['artifacts']]")
+          ARGS+=("set/build-manifest.json" "set/checksums.sha256")
+          TITLE=$(python3 -c "import json;print(json.load(open('set/build-manifest.json'))['release_title'])")
+          gh release create "build-$BUILD_NUMBER" --target "$SOURCE_SHA" --title "$TITLE" --notes-file notes.md --latest "${ARGS[@]}"
+          gh release view "build-$BUILD_NUMBER" --json url,assets --jq '.url, (.assets[].name)'

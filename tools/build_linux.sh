@@ -7,11 +7,7 @@ set -eu
 cd "$(dirname "$0")/.."
 G="${GODOT:-godot}"; OUT="${1:-build/linux}"; mkdir -p "$OUT/pkg"
 python3 tools/provenance.py check-tree
-VER=$(python3 -c "import json;print(json.load(open('release/release.json'))['version'])")
-SHA7=$(git rev-parse --short=7 HEAD)
-# internal name when the tree is dirty, or v$VER was already released from another commit
-TAG_SHA=$(git rev-parse -q --verify "refs/tags/v$VER^{commit}" || true)
-if [ -n "$(git status --porcelain --untracked-files=no)" ] || { [ -n "$TAG_SHA" ] && [ "$TAG_SHA" != "$(git rev-parse HEAD)" ]; }; then ARC="Ragdoll-Rally-Launch-v$VER-internal-$SHA7-Linux.tar.gz"; else ARC="Ragdoll-Rally-Launch-v$VER-Linux.tar.gz"; fi
+ARC=$(python3 tools/coordinated.py artifact-name --platform linux)   # official name only for a clean tree whose build number is not already another binary
 $G --headless --path launch --import >/dev/null 2>&1 || true
 $G --headless --path launch --export-release "Linux Desktop" "$(realpath "$OUT")/pkg/RagdollRallyLaunch.x86_64"
 chmod +x "$OUT/pkg/RagdollRallyLaunch.x86_64"

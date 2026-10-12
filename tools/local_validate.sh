@@ -14,6 +14,9 @@ for t in $TESTS; do
 done
 python3 -c "import json;json.load(open('release/release.json'))" && echo "PASS  release.json parses"
 python3 -W ignore launch/tools/test_ota_tools.py >/tmp/ota_py.out 2>&1 && echo "PASS  OTA publisher/native gates (python)" || { echo "FAIL  OTA publisher/native gates"; tail -5 /tmp/ota_py.out; rc=1; }
+python3 -W ignore tools/test_coordinated.py >/tmp/coord_py.out 2>&1 && echo "PASS  coordinated build/release rules (python, negative authorization tests)" || { echo "FAIL  coordinated build/release rules"; tail -8 /tmp/coord_py.out; rc=1; }
+AL="${ACTIONLINT:-$(command -v actionlint || true)}"
+if [ -n "$AL" ]; then $AL >/tmp/actionlint.out 2>&1 && echo "PASS  workflow lint (actionlint)" || { echo "FAIL  workflow lint"; head -20 /tmp/actionlint.out; rc=1; }; else echo "SKIP  workflow lint (actionlint not installed; set ACTIONLINT=)"; fi
 python3 tools/check_policy.py | grep -E "^FAIL|^----" ; [ "${PIPESTATUS[0]}" = "0" ] && echo "PASS  engineering policy (single source of truth)" || { echo "FAIL  engineering policy"; rc=1; }
 python3 tools/branch_ledger.py --check || rc=1
 exit $rc

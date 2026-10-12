@@ -1,21 +1,20 @@
 name: Launch OTA publish
 
-# MANUAL ONLY. Publishing an OTA makes installed apps on that channel discover it
-# on their next launch, so it is never triggered automatically.
+# MANUAL ONLY. Publishing an OTA makes installed apps on that channel discover it on their next launch, so it is never triggered by a push,
+# merge, tag or pull request. A run needs (1) a human dispatch from the authoritative branch, (2) the exact confirmation phrase, and
+# (3) the SHA-256 of launch/ota/publish_request.json, so the person authorizing has seen exactly what will be published.
+# Compute it with:  sha256sum launch/ota/publish_request.json
 on:
-  push:
-    branches: [claude/launch-gameplay-pivot]      # the authoritative line only (release/release.json); older branches are history, never a release source
-    paths:
-      - 'launch/ota/publish_request.json'   # committing this file IS the authorization to publish
   workflow_dispatch:
     inputs:
-      name:
-        description: 'Human-readable OTA name (what changed)'
+      confirm:
+        description: 'Type exactly: PUBLISH OTA'
+        type: string
         required: true
-      channel:
-        description: 'Channel (installed APKs follow "poc"; use "test" for pipeline checks)'
+      request_sha256:
+        description: 'SHA-256 of launch/ota/publish_request.json as committed on this branch'
+        type: string
         required: true
-        default: 'test'
 
 concurrency:
   group: launch-ota-${{ github.ref }}
@@ -53,31 +52,31 @@ jobs:
           godot --headless --path launch -s tests/verify_ota_safety.gd
           python3 launch/tools/test_ota_tools.py
 
-      - name: Resolve request (dispatch inputs or publish_request.json)
-        id: req
+      - name: Authorization (confirmation phrase + request hash) and request resolution
         env:
-          IN_NAME: ${{ github.event.inputs.name }}
-          IN_CH: ${{ github.event.inputs.channel }}
+          IN_CONFIRM: ${{ inputs.confirm }}
+          IN_HASH: ${{ inputs.request_sha256 }}
         run: |
+          [ "$IN_CONFIRM" = "PUBLISH OTA" ] || { echo "::error::confirmation phrase missing or wrong; nothing published"; exit 1; }
+          ACTUAL=$(sha256sum launch/ota/publish_request.json | cut -d' ' -f1)
+          [ "$IN_HASH" = "$ACTUAL" ] || { echo "::error::request_sha256 does not match the committed publish_request.json ($ACTUAL); nothing published"; exit 1; }
           # publish_request.json: {"name", "channel", optional "source_ref" (a tag/SHA ON the authoritative history; default = this commit),
           #                        optional "rollback_reason" + "rollback_floor_epoch" (deliberate downgrade, see docs/ENGINEERING_POLICY.md)}
-          if [ -n "$IN_NAME" ]; then NAME="$IN_NAME"; CH="$IN_CH"; REF=""; RB=""; RBF=""; else
-            NAME=$(python3 -c "import json;print(json.load(open('launch/ota/publish_request.json'))['name'])")
-            CH=$(python3 -c "import json;print(json.load(open('launch/ota/publish_request.json'))['channel'])")
-            REF=$(python3 -c "import json;print(json.load(open('launch/ota/publish_request.json')).get('source_ref',''))")
-            RB=$(python3 -c "import json;print(json.load(open('launch/ota/publish_request.json')).get('rollback_reason',''))")
-            RBF=$(python3 -c "import json;print(json.load(open('launch/ota/publish_request.json')).get('rollback_floor_epoch',''))")
-          fi
-          echo "name=$NAME" >> "$GITHUB_OUTPUT"
-          echo "channel=$CH" >> "$GITHUB_OUTPUT"
-          echo "ref=$REF" >> "$GITHUB_OUTPUT"
-          echo "rollback=$RB" >> "$GITHUB_OUTPUT"
-          echo "rollback_floor=$RBF" >> "$GITHUB_OUTPUT"
+          # values go through the environment, never interpolated into shell text
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json, re
+          r = json.load(open("launch/ota/publish_request.json"))
+          assert re.fullmatch(r"[a-z0-9][a-z0-9-]{0,30}", r["channel"]), "channel must be lowercase letters, digits and dashes"
+          for k, v in (("REQ_NAME", r["name"]), ("REQ_CHANNEL", r["channel"]), ("REQ_REF", r.get("source_ref", "")),
+                       ("REQ_ROLLBACK", r.get("rollback_reason", "")), ("REQ_ROLLBACK_FLOOR", str(r.get("rollback_floor_epoch", "")))):
+              assert "\n" not in str(v), k
+              print("%s=%s" % (k, v))
+          PY
 
       - name: Select the payload source (exact SHA, authoritative history only)
         id: src
         run: |
-          if [ -n "${{ steps.req.outputs.ref }}" ]; then SRC_SHA=$(git rev-parse "${{ steps.req.outputs.ref }}^{commit}"); else SRC_SHA="$GITHUB_SHA"; fi
+          if [ -n "$REQ_REF" ]; then SRC_SHA=$(git rev-parse "$REQ_REF^{commit}"); else SRC_SHA="$GITHUB_SHA"; fi
           git merge-base --is-ancestor "$SRC_SHA" "$GITHUB_SHA" || { echo "OTA source $SRC_SHA is not part of the authoritative history"; exit 1; }
           if [ "$SRC_SHA" = "$GITHUB_SHA" ]; then DIR="$GITHUB_WORKSPACE"; else git worktree add "$RUNNER_TEMP/otasrc" "$SRC_SHA"; DIR="$RUNNER_TEMP/otasrc"; fi
           echo "sha=$SRC_SHA" >> "$GITHUB_OUTPUT"
@@ -91,19 +90,19 @@ jobs:
           SRC_DIR="${{ steps.src.outputs.dir }}"
           SHA7=$(echo "$SRC_SHA" | cut -c1-7)
           SEQ=${{ github.run_number }}
-          CH="${{ steps.req.outputs.channel }}"
+          CH="$REQ_CHANNEL"
           ID="${CH}-${SEQ}-${SHA7}"
           mkdir -p out
           godot --headless --path "$SRC_DIR/launch" --import || true
           godot --headless --path "$SRC_DIR/launch" --export-pack "Launch OTA Pack" "$GITHUB_WORKSPACE/out/launch-ota-${ID}.pck"
           test -s "out/launch-ota-${ID}.pck"
           URL="https://github.com/${{ github.repository }}/releases/download/launch-ota-${ID}/launch-ota-${ID}.pck"
-          RBARGS=""
-          if [ -n "${{ steps.req.outputs.rollback }}" ]; then RBARGS="--rollback-reason '${{ steps.req.outputs.rollback }}' --rollback-floor ${{ steps.req.outputs.rollback_floor }}"; fi
-          eval python3 launch/tools/ota_tools.py manifest --out out/manifest.json --pck "out/launch-ota-${ID}.pck" \
-            --id "$ID" --name "'${{ steps.req.outputs.name }}'" --sequence "$SEQ" --sha "$SRC_SHA" --root "$SRC_DIR/launch" \
+          RBARGS=()
+          if [ -n "$REQ_ROLLBACK" ]; then RBARGS=(--rollback-reason "$REQ_ROLLBACK" --rollback-floor "$REQ_ROLLBACK_FLOOR"); fi
+          python3 launch/tools/ota_tools.py manifest --out out/manifest.json --pck "out/launch-ota-${ID}.pck" \
+            --id "$ID" --name "$REQ_NAME" --sequence "$SEQ" --sha "$SRC_SHA" --root "$SRC_DIR/launch" \
             --epoch "$(python3 launch/tools/ota_tools.py epoch --rev "$SRC_SHA")" \
-            --channel "$CH" --url "$URL" $RBARGS
+            --channel "$CH" --url "$URL" "${RBARGS[@]}"
           cat out/manifest.json
           echo "id=$ID" >> "$GITHUB_OUTPUT"
           echo "channel=$CH" >> "$GITHUB_OUTPUT"
@@ -120,7 +119,7 @@ jobs:
           ID="${{ steps.pack.outputs.id }}"
           CH="${{ steps.pack.outputs.channel }}"
           gh release create "launch-ota-${ID}" "out/launch-ota-${ID}.pck" "out/manifest.json" \
-            --title "Launch OTA ${ID} - ${{ steps.req.outputs.name }}" --prerelease \
+            --title "Launch OTA ${ID} - ${REQ_NAME}" --prerelease \
             --notes "OTA payload. Source ${{ steps.src.outputs.sha }} (published from commit ${GITHUB_SHA}). Channel ${CH}. Applies only to native builds whose runtime_compat matches manifest.json." \
             --target "$GITHUB_SHA"
           POINTER="launch-ota-channel-${CH}"
