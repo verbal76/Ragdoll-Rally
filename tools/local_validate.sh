@@ -13,4 +13,6 @@ for t in $TESTS; do
   if [ $code -ne 0 ] || echo "$out" | grep -qE "^FAIL|SCRIPT ERROR"; then echo "FAIL  $t"; echo "$out" | grep -E "^FAIL|SCRIPT ERROR" | head; rc=1; else echo "PASS  $t"; fi
 done
 python3 -c "import json;json.load(open('release/release.json'))" && echo "PASS  release.json parses"
+python3 tools/check_policy.py | grep -E "^FAIL|^----" ; [ "${PIPESTATUS[0]}" = "0" ] && echo "PASS  engineering policy (single source of truth)" || { echo "FAIL  engineering policy"; rc=1; }
+python3 tools/branch_ledger.py --check || rc=1
 exit $rc

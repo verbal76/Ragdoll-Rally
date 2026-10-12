@@ -4,7 +4,7 @@ name: Launch OTA publish
 # on their next launch, so it is never triggered automatically.
 on:
   push:
-    branches: [claude/launch-api36-modernization, claude/launch-expanded-playfield, claude/launch-gameplay-pivot]
+    branches: [claude/launch-gameplay-pivot]      # the authoritative line only (release/release.json); older branches are history, never a release source
     paths:
       - 'launch/ota/publish_request.json'   # committing this file IS the authorization to publish
   workflow_dispatch:
@@ -33,6 +33,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
+      - name: Policy gate (authoritative branch only, see docs/ENGINEERING_POLICY.md)
+        run: python3 tools/check_policy.py --ci
 
       - name: Download Godot (no export templates needed for a PCK)
         run: |

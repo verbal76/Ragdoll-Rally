@@ -6,5 +6,6 @@
   "notes": [
     "Controller fix: in the game view the left stick only aims. It no longer highlights and cycles the on-screen buttons, so artillery (and every other launcher) can be aimed with a controller.",
     "Everything from v17 is included: EXIT button, bigger cities, the city staying beat up between onslaughts (RESET CITY), railgun balance, controller SELECT button, cars and pedestrians, Windows PC version."
-  ]
+  ],
+  "authoritative_branch": "claude/launch-gameplay-pivot"
 }

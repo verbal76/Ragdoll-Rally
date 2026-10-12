@@ -42,3 +42,12 @@ GitHub-hosted Actions minutes are shared across the owner's projects and deliber
 - Actions ARE appropriate for: the final validation + build of a candidate that is really being delivered; OTA publication with its safety/compat/signing checks; a platform-specific check that cannot be reproduced locally.
 - Release safety is never traded for minutes: signing verification, runtime/OTA compatibility, `verify_apk.py`, APK content inspection and rollback protections stay mandatory for delivery builds.
 - Workflows use concurrency groups; `launch-ota.yml` is manual/request-file only; `release-retrofit.yml` is manual only.
+
+## SINGLE SOURCE OF TRUTH (MANDATORY, owner directive 2026-10-12; full text: `docs/ENGINEERING_POLICY.md`)
+**Every change belongs to one authoritative product history. Every supported platform builds from that history. Every abandoned branch must be accounted for before valuable work is discarded.**
+- ONE game, ONE Godot project (`launch/`), many targets (Android, Windows, Linux/Steam Deck). Never fork the game per platform; platform differences live in the documented adapters only.
+- The authoritative branch is `release/release.json` -> `authoritative_branch` (`claude/launch-gameplay-pivot`). Branches are temporary workspaces: start from it, merge back after validation; never keep permanent per-platform or per-agent copies. Release/OTA workflows run only from it.
+- A fix for one platform is evaluated against all platforms. A coordinated release uses ONE source SHA for every artifact (`tools/provenance.py`, `tools/release_manifest.py`); desktop builds require a committed SHA on the authoritative branch.
+- Before discarding or abandoning a branch, run `python3 tools/branch_ledger.py --check` and record a disposition in `release/branch_dispositions.json`. Never delete branches or rewrite shared history without owner approval.
+- Publishing APKs/EXEs/OTAs, merging into `main`, and changing OTA-boundary files need explicit owner authorisation. OTA must never serve source older than the native release on its channel (see policy section 5).
+- Enforced by `python3 tools/check_policy.py` (run by `tools/local_validate.sh` and by the release workflows). Do not weaken it.
