@@ -56,14 +56,16 @@ Latest release v18 (Android APK, delivered by CI). v19 prepared, `deliver:false`
 | OTA-1 | corrective poc-g2 OTA not published | P0 for v14-v18 devices | RED | owner authorization (docs/OTA_RECOVERY.md) |
 | GFX-1 | Vulkan/renderer | P3 | RED | not recommended before measurement |
 
-## Gaps against the standard (re-check after reading it)
-| ID | Standard requirement | Current state | Class |
-|---|---|---|---|
-| STD-1 | s.6-8: one release per build "Game Title Build NN", assets `Game Title Build NN APK.apk / EXE.zip / Linux.tar.gz`, tag build-NN or "an established compatible convention" | CLAUDE.md (owner rule, 2026-10) mandates `Ragdoll Rally Launch vN`, `Ragdoll-Rally-Launch-vN.apk`, tag vN. Tag convention is acceptable; titles/filenames differ. Not changed: two owner rules conflict | RED - owner picks one |
-| STD-2 | s.9: one manual workflow with inputs platform / source_sha / build_number / destination | android.yml (release.json-gated) + local `tools/build.sh` (added); no single workflow_dispatch building all three from a SHA, desktop not built in CI | RED (Large; hosted builds) - recommended next |
-| STD-3 | s.8: desktop artifacts in GitHub Releases | desktop zips are on orphan branch `windows-internal-test`; Android only in Releases | RED (publishing) |
-| STD-4 | s.5 manifest per build, checksums.sha256 | `tools/release_manifest.py` + per-APK checksum exist; no single build-manifest.json/checksums.sha256 asset in releases | GREEN-later, part of STD-2 |
-| STD-5 | s.19 docs | CLAUDE.md, RELEASES.md, BRANCH_LEDGER.md present; STEAM_HARDWARE_CHECKLIST.md added; UPDATES = OTA_ARCHITECTURE.md + OTA_RECOVERY.md; THIRD_PARTY = launch/ASSETS_LICENSES.md + third_party/NOTICE.md; PLATFORM_SUPPORT = STEAMDECK.md + WINDOWS_STEAM.md + RELEASE_PARITY.md (equivalents, not renamed to avoid duplicates) | done |
-| STD-6 | s.13 glyphs: keyboard/mouse art, mixed-input stability, manual override | gamepad art + manual style done; keyboard/mouse art not imported (library has Keyboard_Mouse sets); hints/toasts are text | YELLOW, open |
-| STD-7 | s.11 save schema version | none in launch.cfg | RED (migration) |
-| STD-8 | s.12.11 measured performance | none | needs hardware |
+## Gaps against the standard - status after the post-audit pass (owner decisions N1-N3)
+| ID | Standard requirement | Status |
+|---|---|---|
+| STD-1 | naming "Ragdoll Rally Build NN" | DONE (N1): CLAUDE.md, docs/RELEASES.md, build.yml, coordinated.py names; historical v1-v18 untouched; OTA baselines recognise `build-<N>` tags |
+| STD-2 | one manual workflow platform / source_sha / build_number / destination | IMPLEMENTED, NOT RUN: `.github/workflows/build.yml` (+ `tools/coordinated.py`, `tools/build.sh`, `tools/package_smoke.sh`); policy + negative tests + actionlint pass locally; never executed on GitHub |
+| STD-3 | desktop artifacts in GitHub Releases | IMPLEMENTED via build.yml (release job, after every selected platform passed); no release created |
+| STD-4 | build-manifest.json + checksums.sha256 | DONE (coordinated.py manifest/verify; exercised by tools/package_smoke.sh and tests) |
+| STD-5 | s.19 documents | done (equivalents mapped; STEAM_HARDWARE_CHECKLIST.md; OTA_RECOVERY_AUTHORIZATION.md) |
+| STD-6 | glyphs: keyboard/mouse, mixed input, manual override | DONE: Xbox/PS/Switch + keyboard/mouse (Dark set) art on Controls screen, hints, legend and toasts; manual style; 600 ms device hold; keys absent from the set (e.g. "4") fall back to text. Not verified on hardware |
+| STD-7 | save schema version | DONE, backward compatible: `[meta] schema=1` stamped on write; legacy saves read unchanged (original kept once as `.v0`); newer schemas never down-stamped (`.vN` kept once); atomic writes + `.bak` retained |
+| STD-8 | measured performance | open, needs hardware |
+| STD-9 | s.9 no automatic expensive triggers | DONE: android.yml (push on release.json) removed; build.yml / launch-ota.yml manual only; checks.yml = read-only PR lint (policy, python tests, actionlint) |
+| STD-10 | OTA publication separate and explicit | DONE: launch-ota.yml needs dispatch + `PUBLISH OTA` + request-file SHA-256 (was: a push of the request file) |

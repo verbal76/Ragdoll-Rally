@@ -19,8 +19,9 @@ N/A = not applicable. Nothing below is claimed as Valve-Verified; no physical De
 | 12.10 no external launcher | DONE | direct launch |
 | 12.11 performance (FPS, frame time, CPU/GPU, memory, load, battery) | PENDING-HW | no measurements exist |
 | 12.12 cold/repeat launch, suspend/resume, controller reconnect, long play, clean exit | PENDING-HW | reconnect logic exists (Controls.pad_connected); unverified on device |
-| 11 Steam Cloud | PENDING-STEAM | saves are user:// ConfigFiles; graphics kept separate for non-sync |
-| 13 glyphs | PARTIAL | Xbox/PS/Switch art on the Controls screen + manual prompt style; hints/toasts and keyboard/mouse art still text |
+| 11 Saves | DONE (local) | crash-safe writes, `.bak` recovery, schema stamp (legacy loads unchanged); `verify_save_safety` |
+| 11 Steam Cloud | PENDING-STEAM | saves are user:// ConfigFiles (launch.cfg / controls.cfg); graphics.cfg is device-local and must be excluded from sync; no Steamworks / App ID exists |
+| 13 glyphs | DONE (software) / PENDING-HW | Xbox / PlayStation / Switch / keyboard+mouse art on Controls screen, hints, legend, toasts; manual style (Auto / Xbox-Deck / PlayStation / Nintendo); 600 ms hold against prompt flicker; tests `verify_glyphs`, `verify_controls`; license: CC0 per author listing (URL + dated copy pending from owner) |
 | 10 SteamPipe | PENDING-STEAM | desktop builds ship OTA-disabled; Steam delivers updates |
 
 Owner physical checklist (Deck): launch from Game Mode with controller only -> reach every screen -> fire a full level -> Controls screen shows A/B/X/Y art ->
