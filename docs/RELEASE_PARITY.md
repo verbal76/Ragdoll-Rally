@@ -12,7 +12,7 @@ Source of truth for "which artifact came from which commit" (policy: docs/ENGINE
 | (unreleased) | - | Linux/Steam Deck + Windows internal builds at cf0353b | newer than v18 (Deck tuning); an APK from the same SHA does not exist yet. A v19 must rebuild EVERY target from one SHA. |
 
 From now on desktop builds are produced by `tools/build_windows.sh` / `tools/build_linux.sh`, which require a committed SHA on the authoritative branch and
-pack `provenance.json`; a coordinated release is joined with `tools/release_manifest.py` (one SHA, no dirty trees).
+pack `provenance.json`; a coordinated release is joined with `tools/coordinated.py manifest` into `build-manifest.json` + `checksums.sha256` (one SHA, one build number, no dirty trees, names verified).
 
 ## OTA channel poc-g2 vs native builds
 Incident, evidence, options and the exact proposed publication: `docs/OTA_RECOVERY.md`. Status: the corrective OTA (baseline-equal, from v18) is

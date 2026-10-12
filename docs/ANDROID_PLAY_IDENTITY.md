@@ -18,7 +18,7 @@ Status labels: CONFIRMED (read from repo or the built APK) / OWNER (owner confir
 | ABIs | arm64-v8a only | preset |
 | Permissions | b2: none. Infra build adds `INTERNET` (OTA client) | APK / preset |
 | Signing | DEBUG, committed throwaway keystore `launch/debug.keystore` (cert SHA-256 32:A3:98:8D:...:C1:5B). Not an upload key, not Play-ready | APK |
-| Build route | GitHub Actions, Godot 4.4.1 headless, prebuilt template, APK only | `.github/workflows/android.yml` |
+| Build route | GitHub Actions, Godot 4.4.1 headless, prebuilt template, APK only | `.github/workflows/build.yml` |
 | AAB | **Not possible with the current route** (Godot AAB needs the Gradle build template). Not built | — |
 
 ## Google Play target-API requirement — VERIFIED 2026-10-03

@@ -102,5 +102,21 @@ class Gates(unittest.TestCase):
             self.assertEqual(x["source_epoch"], epoch(x["tag"]), x["tag"])
         self.assertEqual({x["runtime_compat"] for x in b[:5]}, {self.live["runtime_compat"]})
 
+    def test_new_build_tags_count_as_native_baselines(self):
+        """Coordinated builds are tagged build-<N>; the OTA guards must treat them exactly like the historical v<N> releases."""
+        from unittest import mock
+        sys.path.insert(0, HERE)
+        import ota_tools as ota
+        fake = {("tag", "-l", "v[0-9]*", "build-[0-9]*"): "v13\nv18\nbuild-19\nbuild-x\nbuild-20"}
+        def g(*a, repo=None):
+            return fake.get(a, "sha-" + a[1].split("^")[0] if a[0] == "rev-parse" else "")
+        with mock.patch.object(ota, "git", g), mock.patch.object(ota, "fingerprint", lambda rev=None, root=None: "r2-fake"), \
+                mock.patch.object(ota, "epoch_of", lambda rev="HEAD", repo=None: 100 if rev == "sha-build-19" else 90):
+            b = ota.computed_baselines()
+        self.assertEqual([x["tag"] for x in b], ["v18", "build-19", "build-20"])
+        self.assertEqual([x["version"] for x in b], [18, 19, 20])
+        self.assertEqual([x["channel"] for x in b], ["poc-g2", "g3", "g3"])
+        self.assertEqual(b[1]["source_epoch"], 100)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

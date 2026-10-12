@@ -1,9 +1,16 @@
 # Releases and versions
 
-**Ragdoll Rally Launch v18 is the current public version. The next delivered build is v19.**
+**Ragdoll Rally Launch v18 is the last release under the old `v<N>` convention. The next coordinated release is Build 19 (decision N1, 2026-10-12).**
 
-The newest playable file is always the GitHub **Latest** release, titled `Ragdoll Rally Launch v<N>`, containing `Ragdoll-Rally-Launch-v<N>.apk`.
-The rules and the delivery procedure are in the repository root `CLAUDE.md` (they are mandatory for every session).
+From Build 19 on (Hot Attic Games standard v2.0): release `Ragdoll Rally Build NN`, tag `build-NN`, assets `Ragdoll Rally Build NN APK.apk` / `... EXE.zip` /
+`... Linux.tar.gz`, plus `build-manifest.json` and `checksums.sha256`, one number and one source SHA for all of them. GitHub stores spaces in asset file names as
+dots (`Ragdoll.Rally.Build.19.APK.apk`); the release page label shows the standard name. All historical `v1`-`v18` releases and tags stay untouched.
+Builds come only from the manual **Coordinated build** workflow (`.github/workflows/build.yml`), see `CLAUDE.md`. `local_only` runs keep the verified set as the
+private Actions artifact `build-NN-release-set` (14 days) and consume no number.
+The OTA revision (`poc-g2-<seq>-<sha>`, `g3-...`) is a separate identifier from the build number.
+
+## Historical convention (v1-v18)
+The newest playable file was the GitHub **Latest** release, titled `Ragdoll Rally Launch v<N>`, containing `Ragdoll-Rally-Launch-v<N>.apk`.
 
 ## How the numbering was established (2026-10-04)
 Public versions count the playable builds that were actually *delivered* as installable APK releases, in order.

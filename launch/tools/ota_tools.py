@@ -78,13 +78,15 @@ def channel_for(version):
     return "poc-g2" if version <= 18 else "g3"
 
 def computed_baselines():
-    """Native releases (tags v<N>, N >= 14) with their payload epoch, runtime fingerprint and channel, straight from Git history."""
+    """Native releases with their payload epoch, runtime fingerprint and channel, straight from Git history.
+    Tags: historical v<N> (N >= 14) and, from the coordinated-build standard on, build-<N> (the same number space, never both for one N)."""
     out = []
-    for t in git("tag", "-l", "v[0-9]*").split():
-        if not t[1:].isdigit() or int(t[1:]) < 14:
+    for t in git("tag", "-l", "v[0-9]*", "build-[0-9]*").split():
+        num = t[1:] if t.startswith("v") else t[len("build-"):]
+        if not num.isdigit() or int(num) < 14:
             continue
         sha = git("rev-parse", t + "^{commit}")
-        out.append({"version": int(t[1:]), "tag": t, "source_sha": sha, "source_epoch": epoch_of(sha), "runtime_compat": fingerprint(rev=sha), "channel": channel_for(int(t[1:]))})
+        out.append({"version": int(num), "tag": t, "source_sha": sha, "source_epoch": epoch_of(sha), "runtime_compat": fingerprint(rev=sha), "channel": channel_for(int(num))})
     return sorted(out, key=lambda b: b["version"])
 
 def load_baselines():

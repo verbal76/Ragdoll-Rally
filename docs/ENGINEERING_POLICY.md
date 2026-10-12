@@ -23,7 +23,7 @@ Platform adapters (the only allowed differences, all isolated):
 | Graphics options | engine defaults | detected display/GPU, presets, Deck preset, adaptive scale | `scripts/graphics.gd`, `graphics_panel.gd` (no-ops on mobile) |
 | Exit button, window modes | n/a | EXIT (double press), fullscreen/windowed | `main.gd` (guarded by `OS.has_feature("mobile")`) |
 | Updates | OTA channel + native APK | none (Steam / the store delivers) | `scripts/ota_client.gd` (boundary file), `build_info.gd` |
-| Packaging / signing | Gradle, throwaway debug key | export templates, archive with provenance | `tools/build_windows.sh`, `tools/build_linux.sh`, `.github/workflows/android.yml` |
+| Packaging / signing | Gradle, throwaway debug key | export templates, archive with provenance | `tools/build_windows.sh`, `tools/build_linux.sh`, `.github/workflows/build.yml` |
 A fix made for one platform is evaluated against all others before it is merged. A shared-code change never lands for one target only.
 
 ## 3. Branches are workspaces, not products
@@ -39,10 +39,10 @@ A fix made for one platform is evaluated against all others before it is merged.
   SHA-256 (`tools/provenance.py`; `provenance.json` is packed with desktop builds, `build_info.json` / build report for the APK).
 - Desktop builds refuse to run unless HEAD is on the authoritative branch; a dirty tree is allowed only as an INTERNAL build
   (`ALLOW_DIRTY=1`, archive named `v<N>-internal-<sha7>`), never part of a coordinated release.
-- A coordinated release uses ONE SHA for every target. `python3 tools/release_manifest.py build OUT.json <provenance files>` fails when the
+- A coordinated release uses ONE SHA for every target. `python3 tools/coordinated.py manifest|verify` joins the provenance files into `build-manifest.json` + `checksums.sha256` and fails unless all artifacts share one SHA and one build number.
   SHAs or versions differ and when any build was made from a dirty tree; `verify` checks the SHA is on the authoritative branch.
   If one platform fails validation, do not substitute another revision: fix on the authoritative line and rebuild every target.
-- Public naming and the delivery procedure stay as in `CLAUDE.md` (`Ragdoll Rally Launch v<N>`, `release/release.json`).
+- Public naming and the build/release procedure are in `CLAUDE.md` (`Ragdoll Rally Build NN`, manual Coordinated build workflow).
 - Publishing APKs/EXEs/OTAs is an owner-authorised action; building and testing are not.
 
 ## 5. OTA and native compatibility
@@ -56,7 +56,7 @@ A fix made for one platform is evaluated against all others before it is merged.
 - OTA never creates a second history: every OTA is built from a commit on the authoritative branch and records `source_sha`.
 
 ## 6. Enforcement (zero extra Actions minutes)
-- `tools/check_policy.py` (also run by `tools/local_validate.sh` and by the gate step of `android.yml` and `launch-ota.yml`): authoritative
+- `tools/check_policy.py` (also run by `tools/local_validate.sh` and by the validation job of `build.yml`, the PR checks and `launch-ota.yml`): authoritative
   branch named; release/OTA workflows trigger only from it; presets for all targets share one payload; no per-platform copies of the game;
   build scripts require provenance; the Android build records its SHA; this policy is present in `CLAUDE.md`; in CI the ref being built is
   the authoritative branch.

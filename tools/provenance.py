@@ -4,7 +4,7 @@
   provenance.py write --platform windows --config release --artifact FILE --out FILE.json [--allow-dirty]
   provenance.py check-tree [--allow-dirty]       exit 1 unless the working tree is clean and on the authoritative branch
 
-Every platform build of one release must come from the same SHA; the manifest tool (release_manifest.py) verifies that.
+Every platform build of one release must come from the same SHA; tools/coordinated.py (manifest / verify) enforces that.
 """
 import argparse, datetime, hashlib, json, os, platform, subprocess, sys
 

@@ -44,14 +44,8 @@ Why not the tip: it carries unreleased desktop/Deck work that has not been valid
   client and for one already running seq 3; `ota_tools.py guard` passes. (Rebuilt by CI at publication, so the final hash will differ.)
 - The workflow now supports `source_ref`, runs the OTA safety guard and the OTA safety tests before publishing.
 
-## EXACT proposed publication (needs owner approval; nothing has been pushed to this path)
-1. Replace `launch/ota/publish_request.json` with the contents of `launch/ota/proposed/poc-g2-recovery.json`:
-   `{"name": "Baseline-equal payload for v14-v18 (restores v18 gameplay, supersedes poc-g2-3-faeb937)", "channel": "poc-g2", "source_ref": "v18"}`
-2. Commit and push to `claude/launch-gameplay-pivot` (that commit IS the authorization, as documented in `launch-ota.yml`).
-3. The workflow: policy gate -> tests -> builds the pack from the v18 source -> manifest sequence = run number -> guard (epoch >= every native
-   baseline that would accept it; sequence > live) -> creates release `launch-ota-poc-g2-<run>-dcb9c4d` and replaces the channel pointer manifest.
-4. Verify: `curl -L https://github.com/verbal76/Ragdoll-Rally/releases/download/launch-ota-channel-poc-g2/manifest.json` shows source_sha
-   `dcb9c4d...`, source_epoch 83 and sequence > 3; install v18 and check About after two launches.
+## EXACT proposed publication (needs owner approval)
+See `docs/OTA_RECOVERY_AUTHORIZATION.md` (authorization package: source, compatibility, evidence, publication and rollback steps). Publishing now needs a manual dispatch with the phrase `PUBLISH OTA` and the request-file SHA-256; a push no longer starts it.
 
 ## Permanent safeguards (implemented, validated offline; take effect for native builds from v19)
 - Client (`ota_client.gd`, `build_info.gd`; boundary files => new runtime fingerprint, so legacy clients never see future r2-incompatible OTAs):
@@ -60,6 +54,6 @@ Why not the tip: it carries unreleased desktop/Deck work that has not been valid
   blacklist, explicit rollback authorization (`rollback.authorized + reason + floor_epoch`).
 - Publisher (`ota_tools.py guard`, `launch-ota.yml`): refuses a payload older than any native baseline that would accept it, a sequence not above the
   live channel, a source outside the authoritative history; `source_ref` publishes an exact earlier SHA (baseline-equal / rollback).
-- Native release gate (`ota_tools.py native-gate`, `android.yml`): a delivery fails if the live channel manifest it would accept carries an older
+- Native release gate (`ota_tools.py native-gate`, `build.yml`): a delivery fails if the live channel manifest it would accept carries an older
   payload. This gate would have blocked v15 (the incident).
 - v19+ uses channel `g3` (separate pointer) so the legacy poc-g2 recovery manifest keeps serving v14-v18.
