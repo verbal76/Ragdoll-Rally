@@ -1,4 +1,5 @@
 extends Node3D
+const SafeCfg := preload("res://scripts/safe_cfg.gd")
 ## RAGDOLL RALLY: LAUNCH - POC game controller.
 ## States: AIM (drag back) -> FLIGHT (launched, until settled) -> RESULT.
 
@@ -2921,15 +2922,15 @@ func set_view_right(on: bool) -> void:
 	view_right = on
 	_compute_aim_camera()
 	var cf := ConfigFile.new()
-	cf.load("user://launch.cfg")
+	SafeCfg.load(cf, "user://launch.cfg")
 	cf.set_value("view", "pull_right", on)
-	cf.save("user://launch.cfg")
+	SafeCfg.save(cf, "user://launch.cfg")
 
 func _load_best() -> void:
 	if skip_select:
 		return                      # tests: hermetic (no saved choices/upgrades)
 	var cf := ConfigFile.new()
-	if cf.load("user://launch.cfg") == OK:
+	if SafeCfg.load(cf, "user://launch.cfg") == OK:
 		best = int(cf.get_value("score", "best", 0))
 		view_right = bool(cf.get_value("view", "pull_right", false))
 		bank = int(cf.get_value("progress", "bank", 0))
@@ -2961,7 +2962,7 @@ func _load_best() -> void:
 
 func _save_progress() -> void:
 	var cf := ConfigFile.new()
-	cf.load("user://launch.cfg")
+	SafeCfg.load(cf, "user://launch.cfg")
 	cf.set_value("progress", "bank", bank)
 	cf.set_value("progress", "schema", ECONOMY_SCHEMA)
 	for key in Rules.UPGRADE_ORDER:
@@ -2969,14 +2970,14 @@ func _save_progress() -> void:
 	for lid in launcher_levels.keys():
 		cf.set_value("launchers", "lv_" + str(lid), int(launcher_levels[lid]))
 	cf.set_value("launchers", "selected", launcher_id)
-	cf.save("user://launch.cfg")
+	SafeCfg.save(cf, "user://launch.cfg")
 
 func _save_choice() -> void:
 	var cf := ConfigFile.new()
-	cf.load("user://launch.cfg")
+	SafeCfg.load(cf, "user://launch.cfg")
 	cf.set_value("choice", "char", char_idx)
 	cf.set_value("choice", "env_id", str(Rules.ENVIRONMENTS[env_idx]["id"]))
-	cf.save("user://launch.cfg")
+	SafeCfg.save(cf, "user://launch.cfg")
 
 ## Comic-ink look: a full-screen pass drawn by a quad on the camera (GL Compatibility: reads the screen and depth textures).
 ## Every surface keeps its own colour (cel-banded), the sky is untouched; black ink lines at depth / brightness edges, halftone shadows.
@@ -3045,21 +3046,21 @@ func set_ink(on: bool) -> void:
 	if btn_ink:
 		btn_ink.text = "INK: %s" % ("ON" if on else "OFF")
 	var cf := ConfigFile.new()
-	cf.load("user://launch.cfg")
+	SafeCfg.load(cf, "user://launch.cfg")
 	cf.set_value("settings", "ink", on)
-	cf.save("user://launch.cfg")
+	SafeCfg.save(cf, "user://launch.cfg")
 
 func set_gore(on: bool) -> void:
 	gore = on
 	if fx:
 		fx.gore = on
 	var cf := ConfigFile.new()
-	cf.load("user://launch.cfg")
+	SafeCfg.load(cf, "user://launch.cfg")
 	cf.set_value("settings", "gore", on)
-	cf.save("user://launch.cfg")
+	SafeCfg.save(cf, "user://launch.cfg")
 
 func _save_best() -> void:
 	var cf := ConfigFile.new()
-	cf.load("user://launch.cfg")
+	SafeCfg.load(cf, "user://launch.cfg")
 	cf.set_value("score", "best", best)
-	cf.save("user://launch.cfg")
+	SafeCfg.save(cf, "user://launch.cfg")

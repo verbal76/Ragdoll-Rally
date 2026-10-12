@@ -1,4 +1,5 @@
 extends Node
+const SafeCfg := preload("res://scripts/safe_cfg.gd")
 ## Desktop graphics: detects the display and the GPU class (integrated / APU vs discrete), picks a preset for it the first time,
 ## and applies / saves the player's choices. Desktop only: phones keep the engine defaults.
 ## Use with:  const Graphics := preload("res://scripts/graphics.gd")
@@ -127,11 +128,11 @@ func save() -> void:
 	for k in s.keys():
 		var v = s[k]
 		cf.set_value("graphics", k, [v.x, v.y] if v is Vector2i else v)
-	cf.save(CFG_PATH)
+	SafeCfg.save(cf, CFG_PATH)
 
 func load_cfg() -> void:
 	var cf := ConfigFile.new()
-	if cf.load(CFG_PATH) != OK:
+	if SafeCfg.load(cf, CFG_PATH) != OK:
 		return
 	for k in s.keys():
 		if cf.has_section_key("graphics", k):

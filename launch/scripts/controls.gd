@@ -1,4 +1,5 @@
 extends Node
+const SafeCfg := preload("res://scripts/safe_cfg.gd")
 ## Input layer: every control is a remappable action with up to two keyboard/mouse bindings and two gamepad bindings, stored in
 ## user://controls.cfg. Gamepads are detected automatically (connect/disconnect at any time); the game follows whichever device was
 ## used last, so on-screen prompts show the right keys or buttons. Touch (Android) is unaffected: emulated mouse events always aim.
@@ -221,7 +222,7 @@ func apply_to_inputmap() -> void:
 func load_config() -> void:
 	actions = _fresh()
 	var cf := ConfigFile.new()
-	if cf.load(CFG_PATH) == OK:
+	if SafeCfg.load(cf, CFG_PATH) == OK:
 		for a in actions:
 			for d in ["kbm", "pad"]:
 				for i in SLOTS:
@@ -242,7 +243,7 @@ func save_config() -> void:
 				cf.set_value("bindings", "%s_%s_%d" % [a["id"], d, i], v if v != null else 0)
 	for k in settings.keys():
 		cf.set_value("settings", k, settings[k])
-	cf.save(CFG_PATH)
+	SafeCfg.save(cf, CFG_PATH)
 
 func set_setting(key: String, value: Variant) -> void:
 	settings[key] = value
