@@ -1,9 +1,8 @@
 # Compliance audit (provisional) - overnight run of 2026-10-12
 
-**Reference gap:** `HOT_ATTIC_GAMES_MASTER_STANDARD.md` was NOT found (searched the repo, all remote branches, and the filesystem). This audit uses the
-directive text, `CLAUDE.md`, `docs/ENGINEERING_POLICY.md` and Valve's public Steam Deck guidance as recalled by the studio docs (`docs/STEAMDECK.md`);
-Valve pages were not re-fetched. Re-run against the real standard when it is available.
-`Source.zip` WAS supplied (as an upload); it is integrated (see GLY-1).
+**Reference:** the master standard (Hot Attic Games Universal Game Development, Build, Update and Distribution Standard v2.0, supplied as
+`HOT_ATTIC_GAMES - steamdeck - dev mandate.doc` mid-run, after the first audit pass) was read in full and the findings below were re-checked against it.
+It is not stored in the repository (binary .doc); the owner's copy is the reference. `Source.zip` was supplied and is integrated (GLY-1).
 
 Baseline: Ragdoll Rally Launch, Godot 4.7.1 (GL Compatibility), authoritative branch `claude/launch-gameplay-pivot`, started at c094ef4.
 Latest release v18 (Android APK, delivered by CI). v19 prepared, `deliver:false`. Update system: PCK-based OTA (Android only; `ota_enabled` is false in desktop builds).
@@ -56,3 +55,15 @@ Latest release v18 (Android APK, delivered by CI). v19 prepared, `deliver:false`
 | HW-1 | no hardware validation (Deck, Windows, Android after v14) | P1 | RED (needs hardware) | owner |
 | OTA-1 | corrective poc-g2 OTA not published | P0 for v14-v18 devices | RED | owner authorization (docs/OTA_RECOVERY.md) |
 | GFX-1 | Vulkan/renderer | P3 | RED | not recommended before measurement |
+
+## Gaps against the standard (re-check after reading it)
+| ID | Standard requirement | Current state | Class |
+|---|---|---|---|
+| STD-1 | s.6-8: one release per build "Game Title Build NN", assets `Game Title Build NN APK.apk / EXE.zip / Linux.tar.gz`, tag build-NN or "an established compatible convention" | CLAUDE.md (owner rule, 2026-10) mandates `Ragdoll Rally Launch vN`, `Ragdoll-Rally-Launch-vN.apk`, tag vN. Tag convention is acceptable; titles/filenames differ. Not changed: two owner rules conflict | RED - owner picks one |
+| STD-2 | s.9: one manual workflow with inputs platform / source_sha / build_number / destination | android.yml (release.json-gated) + local `tools/build.sh` (added); no single workflow_dispatch building all three from a SHA, desktop not built in CI | RED (Large; hosted builds) - recommended next |
+| STD-3 | s.8: desktop artifacts in GitHub Releases | desktop zips are on orphan branch `windows-internal-test`; Android only in Releases | RED (publishing) |
+| STD-4 | s.5 manifest per build, checksums.sha256 | `tools/release_manifest.py` + per-APK checksum exist; no single build-manifest.json/checksums.sha256 asset in releases | GREEN-later, part of STD-2 |
+| STD-5 | s.19 docs | CLAUDE.md, RELEASES.md, BRANCH_LEDGER.md present; STEAM_HARDWARE_CHECKLIST.md added; UPDATES = OTA_ARCHITECTURE.md + OTA_RECOVERY.md; THIRD_PARTY = launch/ASSETS_LICENSES.md + third_party/NOTICE.md; PLATFORM_SUPPORT = STEAMDECK.md + WINDOWS_STEAM.md + RELEASE_PARITY.md (equivalents, not renamed to avoid duplicates) | done |
+| STD-6 | s.13 glyphs: keyboard/mouse art, mixed-input stability, manual override | gamepad art + manual style done; keyboard/mouse art not imported (library has Keyboard_Mouse sets); hints/toasts are text | YELLOW, open |
+| STD-7 | s.11 save schema version | none in launch.cfg | RED (migration) |
+| STD-8 | s.12.11 measured performance | none | needs hardware |
