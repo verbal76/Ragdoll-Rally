@@ -10,3 +10,8 @@ Support by crediting 'Kenney' or 'www.kenney.nl' (this is not a requirement)."
 
 Extracted GLB models + textures live in `assets/kenney/*`, each with its original `License.txt`.
 Sounds are generated procedurally in code (no third-party audio).
+
+
+## Controller glyphs (owner-supplied `Source.zip`)
+
+Curated subset in `assets/glyphs/` (see its `NOTICE.md`). **License UNVERIFIED**: the archive ships no license file; the owner's listing says CC0 1.0 but the author/source page is not recorded. Must be confirmed before commercial release.

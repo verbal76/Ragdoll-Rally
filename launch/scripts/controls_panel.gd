@@ -1,4 +1,5 @@
 extends Control
+const GlyphLib := preload("res://scripts/glyph_lib.gd")
 ## Controls menu: every action with its two keyboard/mouse and two gamepad bindings. Click a slot, press the new input; right-click
 ## (or the X button) clears it. Gamepad menu navigation works (D-pad / stick + A). Sliders for aim sensitivity, dead zone, invert Y.
 ## Use with:  const ControlsPanel := preload("res://scripts/controls_panel.gd")
@@ -205,7 +206,10 @@ func refresh() -> void:
 				if not lst.is_empty() and str(lst["action"]) == id and str(lst["device"]) == d and int(lst["slot"]) == i:
 					b.text = "Press..."
 				else:
-					b.text = controls.label_of((a[d] as Array)[i])
+					var lbl: String = controls.label_of((a[d] as Array)[i])
+					b.text = lbl
+					# controller bindings also show the button art (text stays as the accessible fallback)
+					b.icon = GlyphLib.texture_for(controls.pad_kind(), lbl) if d == "pad" else null
 	if _fs_btn:
 		var m: int = DisplayServer.window_get_mode()
 		_fs_btn.text = "Windowed" if (m == DisplayServer.WINDOW_MODE_FULLSCREEN or m == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN) else "Fullscreen"
