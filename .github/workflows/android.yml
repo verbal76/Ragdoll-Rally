@@ -41,8 +41,9 @@ jobs:
             docs
             .github
             CLAUDE.md
-            launch/export_presets.cfg
-            launch/project.godot
+            launch/scripts
+            launch/tests
+            launch/tools
       - name: Policy gate (authoritative branch only, see docs/ENGINEERING_POLICY.md)
         run: python3 tools/check_policy.py --ci
       - id: g
