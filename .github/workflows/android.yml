@@ -46,8 +46,15 @@ jobs:
       - name: Policy gate (authoritative branch only, see docs/ENGINEERING_POLICY.md)
         run: python3 tools/check_policy.py --ci
       - id: g
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           D=$(python3 -c "import json;print(str(json.load(open('release/release.json')).get('deliver', False)).lower())")
+          V=$(python3 -c "import json;print(json.load(open('release/release.json'))['version'])")
+          # a metadata-only edit of release.json after v<N> was delivered must not spend a 28-minute build on an undeliverable APK
+          if [ "${{ github.event_name }}" = "push" ] && [ "$D" = "true" ] && gh release view "v$V" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "build=false" >> "$GITHUB_OUTPUT"; echo "v$V is already released: bump release/release.json to deliver a new build (no build)"; exit 0
+          fi
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$D" = "true" ]; then echo "build=true" >> "$GITHUB_OUTPUT"; else echo "build=false" >> "$GITHUB_OUTPUT"; echo "deliver=false on a push: no build (budget policy)"; fi
 
   build:
