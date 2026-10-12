@@ -32,8 +32,8 @@ for f in sorted(os.listdir(os.path.join(ROOT, ".github", "workflows"))):
         WF[f] = (d, read(".github/workflows/" + f))
         trig = d.get("on", d.get(True))
         keys = set(trig) if isinstance(trig, dict) else set([trig] if isinstance(trig, str) else trig)
-        allowed = {"workflow_dispatch"} | ({"pull_request"} if f == "checks.yml" else set())
-        need(keys <= allowed and "workflow_dispatch" in keys or keys == {"pull_request"}, "%s triggers: %s (push/tag/merge/schedule never start a workflow)" % (f, sorted(keys)))
+        allowed = {"workflow_dispatch"} | ({"pull_request"} if f in ("checks.yml", "build.yml") else set())
+        need(keys <= allowed and ("workflow_dispatch" in keys or keys == {"pull_request"}), "%s triggers: %s (push/tag/merge/schedule never start a workflow)" % (f, sorted(keys)))
 for f in ("build.yml", "launch-ota.yml", "release-retrofit.yml", "checks.yml"):
     need(f in WF, "workflow present: " + f)
 need("android.yml" not in WF, "the old push-triggered android.yml is gone (build.yml is the one build workflow)")
@@ -42,6 +42,13 @@ trig = bd.get("on", bd.get(True))
 need(set(trig["workflow_dispatch"]["inputs"]) == {"platform", "source_sha", "build_number", "destination"}, "build.yml takes platform / source_sha / build_number / destination")
 need(set(trig["workflow_dispatch"]["inputs"]["platform"]["options"]) == {"android", "windows", "linux", "all"}, "build.yml platform choices")
 need(set(trig["workflow_dispatch"]["inputs"]["destination"]["options"]) == {"github_releases", "local_only"}, "build.yml destination choices")
+pr = trig.get("pull_request") or {}
+need(pr.get("paths") == [".github/workflows/build.yml"], "build.yml's pull_request trigger is registration-only (limited to edits of build.yml itself)")
+nongated = [j for j, v in bd["jobs"].items() if j != "registration" and "workflow_dispatch" not in str(v.get("if", "")) and not v.get("needs")]
+need(nongated == [], "every build.yml job except 'registration' is gated on workflow_dispatch directly or through needs (%s)" % (nongated or "ok"))
+reg = bd["jobs"]["registration"]
+need(len(reg["steps"]) == 1 and set(reg["steps"][0]) == {"run"} and "echo" in reg["steps"][0]["run"] and "pull_request" in str(reg["if"]), "the registration job is a single echo on pull_request")
+need("version-code --build" in bt and "github.run_number }}/" not in bt and "--version-code ${{ github.run_number" not in bt, "Android versionCode comes from the build number (1000 + N), never from a workflow run number")
 need(bd["permissions"] == {"contents": "read"}, "build.yml is read-only by default")
 writers = [j for j, v in bd["jobs"].items() if (v.get("permissions") or {}).get("contents") == "write"]
 need(writers == ["release"], "only the release job can write (found %s)" % writers)

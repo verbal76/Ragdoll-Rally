@@ -28,6 +28,11 @@ def release_json():
 def expand(platform):
     return ["android", "windows", "linux"] if platform == "all" else [platform]
 
+VERSION_CODE_BASE = 1000        # Android versionCode = 1000 + build number: above every earlier APK (v14-v18 = 27-31, which used CI run numbers) and strictly increasing
+
+def version_code(build):
+    return VERSION_CODE_BASE + int(build)
+
 def names(build, internal_sha=None):
     mid = "Build %d" % build + (" internal %s" % internal_sha if internal_sha else "")
     d = {"release_title": "%s Build %d" % (GAME, build), "tag": "build-%d" % build,
@@ -183,6 +188,7 @@ def main():
     m = sub.add_parser("manifest")
     m.add_argument("--dir", required=True); m.add_argument("--build", type=int, required=True); m.add_argument("--sha", required=True)
     m.add_argument("--platforms", required=True); m.add_argument("--destination", default="local_only")
+    vc = sub.add_parser("version-code"); vc.add_argument("--build", type=int, required=True)
     vd = sub.add_parser("verify"); vd.add_argument("--dir", required=True)
     a = ap.parse_args()
     if a.cmd == "validate-request":
@@ -195,6 +201,8 @@ def main():
         sys.exit(1 if errs else 0)
     if a.cmd == "names":
         print(json.dumps(names(a.build), indent=2))
+    elif a.cmd == "version-code":
+        print(version_code(a.build))
     elif a.cmd == "artifact-name":
         print(artifact_name(a.platform, a.build))
     elif a.cmd == "manifest":

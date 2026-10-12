@@ -1,10 +1,15 @@
 name: Coordinated build
 
 # THE one build/release workflow (Hot Attic Games standard v2.0, sections 5-9; docs/RELEASES.md).
-# MANUAL ONLY: it has no push, pull_request, tag or schedule trigger, so source pushes, merges, tags and version edits can never start it.
+# MANUAL ONLY for building: the only way to start a build is workflow_dispatch. There is no push, tag or schedule trigger.
+# The `pull_request` trigger below exists ONLY so GitHub registers this file (a workflow that lives on a non-default branch and has never run is unknown to
+# the dispatch API: 404). It is limited to edits of this file and runs a single echo job; every other job is gated on workflow_dispatch.
 # One native build number + one exact source SHA -> the selected platform artifacts -> (optionally) ONE GitHub Release.
 # Nothing here publishes an OTA, uploads to Steam or Google Play.
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/build.yml'
   workflow_dispatch:
     inputs:
       platform:
@@ -29,7 +34,7 @@ on:
         default: local_only
 
 concurrency:
-  group: coordinated-build-${{ inputs.build_number }}
+  group: coordinated-build-${{ github.event_name == 'workflow_dispatch' && inputs.build_number || github.run_id }}
   cancel-in-progress: false      # never kill a run that may be mid-release
 
 permissions:
@@ -43,8 +48,16 @@ env:
   SIGNING_CERT_SHA256: 32a3988d6348d9eedcc95b40202d5f35e3b0a4d96ac042319de0f7ca7e3dc15b   # public fingerprint of the committed throwaway debug key (no secret exists)
 
 jobs:
+  registration:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: echo "registration only - nothing is built, tagged, released or published on a pull request"
+
   # ~15 s, no secrets, no build tools: every request is checked BEFORE any expensive work starts.
   plan:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -146,9 +159,11 @@ jobs:
           unzip -q "$T/android_source.zip" -d launch/android/build
           echo "4.7.1.stable" > launch/android/.build_version
           touch launch/android/build/.gdignore
-      - name: Set version (versionName "Build N"; versionCode stays the CI run number)
+      - name: Set version (versionName "Build N"; versionCode = 1000 + build number, above every earlier APK and monotonic)
         run: |
-          sed -i "s/^version\/code=.*/version\/code=${{ github.run_number }}/; s/^version\/name=.*/version\/name=\"Build $BUILD_NUMBER\"/" launch/export_presets.cfg
+          VERSION_CODE=$(python3 tools/coordinated.py version-code --build "$BUILD_NUMBER")
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          sed -i "s/^version\/code=.*/version\/code=$VERSION_CODE/; s/^version\/name=.*/version\/name=\"Build $BUILD_NUMBER\"/" launch/export_presets.cfg
           grep -E '^version/' launch/export_presets.cfg
       - name: OTA channel safety gate (the live channel must not downgrade this native build)
         if: env.DESTINATION == 'github_releases'
@@ -165,7 +180,7 @@ jobs:
           KIND=release; [ "$DESTINATION" = "local_only" ] && KIND=internal
           python3 launch/tools/ota_tools.py build-info --out launch/build_info.json \
             --version-name "Build $BUILD_NUMBER" --public-version "Build $BUILD_NUMBER" --product-name "Ragdoll Rally" --build-kind "$KIND" \
-            --version-code ${{ github.run_number }} --sha "$SOURCE_SHA" \
+            --version-code "$VERSION_CODE" --sha "$SOURCE_SHA" \
             --run ${{ github.run_number }} --channel g3 --epoch "$(python3 launch/tools/ota_tools.py epoch)" --target-sdk "$TARGET" --min-sdk "$MIN" --compile-sdk "$COMPILE" \
             --generation "Godot 4.7.1, Gradle build, Android API 36" \
             --manifest-url "https://github.com/${{ github.repository }}/releases/download/launch-ota-channel-g3/manifest.json" \
@@ -186,7 +201,7 @@ jobs:
           set -o pipefail
           python3 launch/tools/verify_apk.py build/rr.apk \
             --package com.hotatticgames.ragdollrally.launch --version-name "Build $BUILD_NUMBER" \
-            --version-code ${{ github.run_number }} --min-sdk 24 --target-sdk 36 \
+            --version-code "$VERSION_CODE" --min-sdk 24 --target-sdk 36 \
             --cert-sha256 "$SIGNING_CERT_SHA256" --json-out build/apk_report.json | tee build/apk_report.txt
           python3 - <<'PY'
           import json
@@ -277,7 +292,7 @@ jobs:
 
   release:
     needs: [plan, assemble]
-    if: ${{ inputs.destination == 'github_releases' && needs.assemble.result == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.destination == 'github_releases' && needs.assemble.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

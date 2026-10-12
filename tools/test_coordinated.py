@@ -105,6 +105,13 @@ class Manifest(unittest.TestCase):
             self.assertTrue(C.make_manifest(d, 19, self.SHA, ["android", "windows", "linux"], "local_only")[1])
             self.assertFalse(os.path.exists(os.path.join(d, "build-manifest.json")))
 
+class VersionCode(unittest.TestCase):
+    def test_version_code_is_above_every_shipped_apk_and_increases(self):
+        shipped = [b["version_code"] for b in json.load(open(os.path.join(C.ROOT, "release", "native_baselines.json")))["baselines"]]
+        self.assertTrue(C.version_code(19) > max(shipped), "Build 19 must install over v14-v18 (versionCode %d vs %d)" % (C.version_code(19), max(shipped)))
+        self.assertEqual(C.version_code(19), 1019)
+        self.assertTrue(all(C.version_code(n + 1) > C.version_code(n) for n in range(1, 500)))
+
 class Workflows(unittest.TestCase):
     def test_policy_checker_passes(self):
         r = subprocess.run([sys.executable, os.path.join(C.ROOT, "tools", "check_policy.py")], capture_output=True, text=True)
