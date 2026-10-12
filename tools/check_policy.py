@@ -44,6 +44,16 @@ need(os.path.exists(os.path.join(ROOT, "launch", "project.godot")), "one Godot p
 dup = [d for d in os.listdir(os.path.join(ROOT, "launch")) if d.lower() in ("android", "windows", "linux", "desktop", "ios", "web", "legacy")]
 need(not dup, "no per-platform copies of the game inside launch/ (%s)" % (dup or "none"))
 
+# OTA safety (version floor): publisher gate, native gate, tests, frozen legacy client
+ota = read(".github/workflows/launch-ota.yml")
+need("ota_tools.py guard" in ota and "fetch-depth: 0" in ota and "source_ref" in ota, "launch-ota.yml runs the OTA safety guard on an exact authoritative source")
+need("verify_ota_safety" in ota, "launch-ota.yml runs the OTA safety tests before publishing")
+need("native-gate" in read(".github/workflows/android.yml") and "--epoch" in read(".github/workflows/android.yml"), "android.yml runs the native-release OTA gate and bakes the payload epoch")
+for f in ("launch/tests/verify_ota_safety.gd", "launch/tests/fixtures/ota_client_legacy_v14_v18.gd", "launch/tests/fixtures/ota_manifest_poc-g2_seq3_faeb937.json", "launch/tools/test_ota_tools.py", "release/native_baselines.json"):
+    need(os.path.exists(os.path.join(ROOT, f)), "OTA safety asset present: " + f)
+need("verify_ota_safety" in read("tools/local_validate.sh") and "test_ota_tools.py" in read("tools/local_validate.sh"), "local_validate runs the OTA safety tests")
+need("source_epoch" in read("launch/scripts/ota_client.gd") and "source_epoch" in read("launch/scripts/build_info.gd"), "the OTA client enforces the payload version floor")
+
 # builds must carry provenance
 for sh in ("build_windows.sh", "build_linux.sh"):
     s = read("tools/" + sh)

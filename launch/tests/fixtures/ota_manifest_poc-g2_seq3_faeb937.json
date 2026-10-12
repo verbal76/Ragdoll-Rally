@@ -1,0 +1,12 @@
+{
+  "id": "poc-g2-3-faeb937",
+  "name": "Mayhem and destruction pass, 20-level upgrades, five launch devices, deep districts, hazards",
+  "sequence": 3,
+  "channel": "poc-g2",
+  "runtime_compat": "r2-abbbcedcb90e",
+  "url": "https://github.com/verbal76/Ragdoll-Rally/releases/download/launch-ota-poc-g2-3-faeb937/launch-ota-poc-g2-3-faeb937.pck",
+  "sha256": "c7c3c5d92889893613885f57ac571a0e7f851cc1b9dabfa482042e285a48455f",
+  "size": 1889776,
+  "source_sha": "faeb937439ced8fe8751deaf25c9f898b0110e6e",
+  "published_at": "2026-10-08T14:49:16Z"
+}

@@ -25,3 +25,6 @@ Channels: installed APKs follow **`poc`**. Use `test` for pipeline checks (no in
 - `launch/tests/verify_ota.gd` (deterministic, no network): offline; 503; 404; malformed manifest; staged update; duplicate; wrong channel; native-required (runtime_compat mismatch); min-version; non-https; corrupt payload (hash mismatch); interrupted download; partial payload; failed activation (garbage pack with valid hash) -> rollback; unconfirmed activation -> rollback at next launch; old/equal OTA ignored; successful activation + promotion; repeat startup; modal state transitions; disabled build.
 - Local end-to-end over real HTTP (headless, local server): launch 1 discovered and staged a payload; launch 2 applied it ("[boot] applying staged update ok=true", the changed game script ran), promoted it after confirmation; launch 3 mounted the known-good. Runtime pack mounting does not alter project settings.
 - Not verified on a device: HTTPS to GitHub from Android, the visual modal, app-kill rollback on a phone.
+
+## Version floor (2026-10-12)
+The client now enforces a payload version floor, re-validates stored packs and guards crash loops; the publisher and native-release workflows gate on it. See `docs/OTA_RECOVERY.md` and `docs/ENGINEERING_POLICY.md` section 5.

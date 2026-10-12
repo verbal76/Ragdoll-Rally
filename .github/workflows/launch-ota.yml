@@ -33,6 +33,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0                 # payload epochs and ancestry need the full authoritative history (and the release tags)
 
       - name: Policy gate (authoritative branch only, see docs/ENGINEERING_POLICY.md)
         run: python3 tools/check_policy.py --ci
@@ -48,6 +50,8 @@ jobs:
           godot --headless --path launch --import || true
           godot --headless --path launch -s tests/verify.gd
           godot --headless --path launch -s tests/verify_ota.gd
+          godot --headless --path launch -s tests/verify_ota_safety.gd
+          python3 launch/tools/test_ota_tools.py
 
       - name: Resolve request (dispatch inputs or publish_request.json)
         id: req
@@ -55,30 +59,59 @@ jobs:
           IN_NAME: ${{ github.event.inputs.name }}
           IN_CH: ${{ github.event.inputs.channel }}
         run: |
-          if [ -n "$IN_NAME" ]; then NAME="$IN_NAME"; CH="$IN_CH"; else
+          # publish_request.json: {"name", "channel", optional "source_ref" (a tag/SHA ON the authoritative history; default = this commit),
+          #                        optional "rollback_reason" + "rollback_floor_epoch" (deliberate downgrade, see docs/ENGINEERING_POLICY.md)}
+          if [ -n "$IN_NAME" ]; then NAME="$IN_NAME"; CH="$IN_CH"; REF=""; RB=""; RBF=""; else
             NAME=$(python3 -c "import json;print(json.load(open('launch/ota/publish_request.json'))['name'])")
             CH=$(python3 -c "import json;print(json.load(open('launch/ota/publish_request.json'))['channel'])")
+            REF=$(python3 -c "import json;print(json.load(open('launch/ota/publish_request.json')).get('source_ref',''))")
+            RB=$(python3 -c "import json;print(json.load(open('launch/ota/publish_request.json')).get('rollback_reason',''))")
+            RBF=$(python3 -c "import json;print(json.load(open('launch/ota/publish_request.json')).get('rollback_floor_epoch',''))")
           fi
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "channel=$CH" >> "$GITHUB_OUTPUT"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "rollback=$RB" >> "$GITHUB_OUTPUT"
+          echo "rollback_floor=$RBF" >> "$GITHUB_OUTPUT"
+
+      - name: Select the payload source (exact SHA, authoritative history only)
+        id: src
+        run: |
+          if [ -n "${{ steps.req.outputs.ref }}" ]; then SRC_SHA=$(git rev-parse "${{ steps.req.outputs.ref }}^{commit}"); else SRC_SHA="$GITHUB_SHA"; fi
+          git merge-base --is-ancestor "$SRC_SHA" "$GITHUB_SHA" || { echo "OTA source $SRC_SHA is not part of the authoritative history"; exit 1; }
+          if [ "$SRC_SHA" = "$GITHUB_SHA" ]; then DIR="$GITHUB_WORKSPACE"; else git worktree add "$RUNNER_TEMP/otasrc" "$SRC_SHA"; DIR="$RUNNER_TEMP/otasrc"; fi
+          echo "sha=$SRC_SHA" >> "$GITHUB_OUTPUT"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          echo "OTA payload source: $SRC_SHA (epoch $(python3 launch/tools/ota_tools.py epoch --rev "$SRC_SHA")) in $DIR"
 
       - name: Build OTA pack + manifest
         id: pack
         run: |
-          SHA7=$(echo "$GITHUB_SHA" | cut -c1-7)
+          SRC_SHA="${{ steps.src.outputs.sha }}"
+          SRC_DIR="${{ steps.src.outputs.dir }}"
+          SHA7=$(echo "$SRC_SHA" | cut -c1-7)
           SEQ=${{ github.run_number }}
           CH="${{ steps.req.outputs.channel }}"
           ID="${CH}-${SEQ}-${SHA7}"
           mkdir -p out
-          godot --headless --path launch --export-pack "Launch OTA Pack" "$GITHUB_WORKSPACE/out/launch-ota-${ID}.pck"
+          godot --headless --path "$SRC_DIR/launch" --import || true
+          godot --headless --path "$SRC_DIR/launch" --export-pack "Launch OTA Pack" "$GITHUB_WORKSPACE/out/launch-ota-${ID}.pck"
           test -s "out/launch-ota-${ID}.pck"
           URL="https://github.com/${{ github.repository }}/releases/download/launch-ota-${ID}/launch-ota-${ID}.pck"
-          python3 launch/tools/ota_tools.py manifest --out out/manifest.json --pck "out/launch-ota-${ID}.pck" \
-            --id "$ID" --name "${{ steps.req.outputs.name }}" --sequence "$SEQ" --sha "$GITHUB_SHA" \
-            --channel "$CH" --url "$URL"
+          RBARGS=""
+          if [ -n "${{ steps.req.outputs.rollback }}" ]; then RBARGS="--rollback-reason '${{ steps.req.outputs.rollback }}' --rollback-floor ${{ steps.req.outputs.rollback_floor }}"; fi
+          eval python3 launch/tools/ota_tools.py manifest --out out/manifest.json --pck "out/launch-ota-${ID}.pck" \
+            --id "$ID" --name "'${{ steps.req.outputs.name }}'" --sequence "$SEQ" --sha "$SRC_SHA" --root "$SRC_DIR/launch" \
+            --epoch "$(python3 launch/tools/ota_tools.py epoch --rev "$SRC_SHA")" \
+            --channel "$CH" --url "$URL" $RBARGS
           cat out/manifest.json
           echo "id=$ID" >> "$GITHUB_OUTPUT"
           echo "channel=$CH" >> "$GITHUB_OUTPUT"
+
+      - name: OTA safety guard (never older than a native baseline, never a lower sequence than the live channel)
+        run: |
+          curl -fsSL -o live.json "https://github.com/${{ github.repository }}/releases/download/launch-ota-channel-${{ steps.pack.outputs.channel }}/manifest.json" || rm -f live.json
+          python3 launch/tools/ota_tools.py guard --manifest out/manifest.json --live live.json --auth-ref "$GITHUB_SHA"
 
       - name: Publish immutable OTA release + move channel pointer
         env:
@@ -88,7 +121,7 @@ jobs:
           CH="${{ steps.pack.outputs.channel }}"
           gh release create "launch-ota-${ID}" "out/launch-ota-${ID}.pck" "out/manifest.json" \
             --title "Launch OTA ${ID} - ${{ steps.req.outputs.name }}" --prerelease \
-            --notes "OTA payload. Commit ${GITHUB_SHA}. Channel ${CH}. Applies only to native builds whose runtime_compat matches manifest.json." \
+            --notes "OTA payload. Source ${{ steps.src.outputs.sha }} (published from commit ${GITHUB_SHA}). Channel ${CH}. Applies only to native builds whose runtime_compat matches manifest.json." \
             --target "$GITHUB_SHA"
           POINTER="launch-ota-channel-${CH}"
           gh release view "$POINTER" >/dev/null 2>&1 || gh release create "$POINTER" --title "Launch OTA channel: ${CH}" --prerelease \

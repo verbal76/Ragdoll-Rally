@@ -14,10 +14,7 @@ Source of truth for "which artifact came from which commit" (policy: docs/ENGINE
 From now on desktop builds are produced by `tools/build_windows.sh` / `tools/build_linux.sh`, which require a committed SHA on the authoritative branch and
 pack `provenance.json`; a coordinated release is joined with `tools/release_manifest.py` (one SHA, no dirty trees).
 
-## OTA channel poc-g2 vs native builds (open finding)
-All APKs v14-v18 embed channel `poc-g2` and runtime_compat `r2-abbbcedcb90e` (unchanged because no boundary file changed). The channel manifest
-(`launch-ota-channel-poc-g2`, downloaded 6 times so far) points at OTA `poc-g2-3-faeb937`: sequence 3, source faeb937, which is 20 commits OLDER than v18.
-`ota_client.gd` only compares sequences (embedded baseline = 0), so a v15-v18 install that reaches the manifest will download and run the older
-faeb937 source after the next cold launch. Resolution needs the owner (publishing an OTA is not an authorised action for the development agent):
-publish a newer OTA from the authoritative tip to `poc-g2` (sequence 4), or retire the channel, and make the next native build refuse OTAs older than
-its own source (boundary change).
+## OTA channel poc-g2 vs native builds
+Incident, evidence, options and the exact proposed publication: `docs/OTA_RECOVERY.md`. Status: the corrective OTA (baseline-equal, from v18) is
+prepared and validated locally and awaits owner authorization; the permanent client/publisher/native-release safeguards are implemented and tested
+and reach devices with the v19 native build.

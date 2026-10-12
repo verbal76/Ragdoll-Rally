@@ -47,11 +47,12 @@ A fix made for one platform is evaluated against all others before it is merged.
 
 ## 5. OTA and native compatibility
 - An OTA pack is valid only for a native build with the same `runtime_compat` fingerprint and channel (`launch/tools/ota_tools.py fingerprint`).
-- KNOWN HAZARD (found by the 2026-10-12 audit): `ota_client.gd` compares only the OTA `sequence` with the installed state. The embedded
-  baseline counts as sequence 0, so a newer native APK with the SAME runtime_compat will download an OLDER OTA that has a higher sequence
-  (today `poc-g2` sequence 3, source faeb937) and run the older source. Rule until the client is changed: after every native release, either
-  publish a newer OTA from that release's SHA on the same channel, or confirm the channel pack is not older than the release. Changing the
-  client is a boundary change (new runtime_compat) and needs owner approval.
+- Version floor (implemented 2026-10-12, details and incident record in `docs/OTA_RECOVERY.md`): every manifest carries `source_epoch` (commit count of
+  its source); the native build bakes its own. Clients refuse older payloads whatever the sequence, order updates by (epoch, sequence), re-validate
+  every stored pack at each launch, and accept a downgrade only with an explicit `rollback` authorization. Publishing is gated by
+  `launch/tools/ota_tools.py guard`; a native delivery is gated by `native-gate`.
+- Legacy v14-v18 clients cannot be changed remotely (identical client, no max version): their channel `poc-g2` must only ever serve a payload at
+  least as new as v18. Replacing it needs an owner-authorized publication.
 - OTA never creates a second history: every OTA is built from a commit on the authoritative branch and records `source_sha`.
 
 ## 6. Enforcement (zero extra Actions minutes)
