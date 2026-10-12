@@ -14,4 +14,4 @@ Sounds are generated procedurally in code (no third-party audio).
 
 ## Controller glyphs (owner-supplied `Source.zip`)
 
-Curated subset in `assets/glyphs/` (see its `NOTICE.md`). **License UNVERIFIED**: the archive ships no license file; the owner's listing says CC0 1.0 but the author/source page is not recorded. Must be confirmed before commercial release.
+Curated subset in `assets/glyphs/` (see its `NOTICE.md`). "Input Prompts" by JulioCacko, **CC0 1.0 Universal** per the author's listing (owner-supplied screenshot; no attribution required). The archive ships no license file and the page URL was not recorded: save the URL plus a dated copy before commercial release.

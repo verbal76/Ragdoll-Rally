@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: false      # never kill a run that may be mid-publish; a newer queued run replaces older queued ones
 
 permissions:
-  contents: write
+  contents: read          # least privilege: only the build job (which publishes a delivered release) gets write
 
 env:
   GODOT_BASE: https://github.com/godotengine/godot/releases/download/4.7.1-stable
@@ -60,6 +60,8 @@ jobs:
 
   build:
     needs: gate
+    permissions:
+      contents: write
     if: needs.gate.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
