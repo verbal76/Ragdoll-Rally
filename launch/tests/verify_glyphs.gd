@@ -27,5 +27,14 @@ func _init() -> void:
 	var t: Texture2D = GlyphLib.texture_for("xbox", "A")
 	check(t != null and t.get_width() == GlyphLib.SIZE, "texture built at UI size")
 	check(GlyphLib.texture_for("xbox", "nonsense") == null, "unknown label returns null")
+	# manual prompt style override (detection unreliable): forced style wins, "auto" restores detection
+	var C: Node = load("res://scripts/controls.gd").new()
+	C.pad_name = "Xbox Controller"
+	check(C.pad_kind() == "xbox", "auto: Xbox pad detected as xbox")
+	C.settings["pad_style"] = "ps"
+	check(C.pad_kind() == "ps" and C.label_of({"t": "jbtn", "c": 0}) == "Cross", "forced PlayStation style relabels A as Cross")
+	C.settings["pad_style"] = "auto"
+	check(C.pad_kind() == "xbox", "auto restores detection")
+	C.free()
 	print("---- GLYPHS %s (%d failures)" % ["OK" if fails == 0 else "FAILED", fails])
 	quit(1 if fails > 0 else 0)

@@ -13,6 +13,7 @@ var _status: Label
 var _sliders := {}
 var _slot_btns := {}          # "action|device|slot" -> Button
 var _fs_btn: Button
+var _style_btn: Button
 var _hdr: Array = []
 var _hint: Label
 var _kbm_btn: Button
@@ -125,6 +126,12 @@ func setup(c: Node) -> void:
 		_force_kbm = not _force_kbm
 		refresh())
 	row.add_child(_kbm_btn)
+	_style_btn = _btn("Prompts: Auto", func():
+		var order: Array = ["auto", "xbox", "ps", "nintendo"]
+		var cur: int = order.find(str(controls.settings.get("pad_style", "auto")))
+		controls.set_setting("pad_style", order[(cur + 1) % order.size()])
+		refresh())
+	row.add_child(_style_btn)
 	_fs_btn = _btn("Fullscreen", _toggle_fullscreen)
 	row.add_child(_fs_btn)
 	if OS.get_name() == "Windows" or OS.get_name() == "Linux" or OS.get_name() == "macOS":
@@ -210,6 +217,8 @@ func refresh() -> void:
 					b.text = lbl
 					# controller bindings also show the button art (text stays as the accessible fallback)
 					b.icon = GlyphLib.texture_for(controls.pad_kind(), lbl) if d == "pad" else null
+	if _style_btn:
+		_style_btn.text = "Prompts: " + {"auto": "Auto", "xbox": "Xbox / Deck", "ps": "PlayStation", "nintendo": "Nintendo"}.get(str(controls.settings.get("pad_style", "auto")), "Auto")
 	if _fs_btn:
 		var m: int = DisplayServer.window_get_mode()
 		_fs_btn.text = "Windowed" if (m == DisplayServer.WINDOW_MODE_FULLSCREEN or m == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN) else "Fullscreen"

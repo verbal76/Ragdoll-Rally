@@ -56,7 +56,7 @@ static func default_actions() -> Array:
 	]
 
 var actions: Array = []                  # [{id, label, group, kbm: [spec|null x2], pad: [spec|null x2]}]
-var settings := {"pad_deadzone": 0.25, "pad_sensitivity": 1.0, "mouse_sensitivity": 1.0, "invert_y": false}
+var settings := {"pad_deadzone": 0.25, "pad_sensitivity": 1.0, "mouse_sensitivity": 1.0, "invert_y": false, "pad_style": "auto"}
 var last_device: String = "kbm"
 var pad_name: String = ""
 var _listening: Dictionary = {}          # {action, device, slot} while waiting for the next input
@@ -140,6 +140,9 @@ static func same(a: Variant, b: Variant) -> bool:
 		and int((a as Dictionary).get("s", 0)) == int((b as Dictionary).get("s", 0))
 
 func pad_kind() -> String:
+	var forced: String = str(settings.get("pad_style", "auto"))      # manual prompt style when detection is unreliable
+	if forced == "xbox" or forced == "ps" or forced == "nintendo":
+		return forced
 	var n: String = pad_name.to_lower()
 	if n.contains("playstation") or n.contains("ps4") or n.contains("ps5") or n.contains("dualsense") or n.contains("dualshock") or n.contains("sony"):
 		return "ps"
@@ -201,7 +204,7 @@ func entry(id: String) -> Dictionary:
 
 func reset_defaults() -> void:
 	actions = _fresh()
-	settings = {"pad_deadzone": 0.25, "pad_sensitivity": 1.0, "mouse_sensitivity": 1.0, "invert_y": false}
+	settings = {"pad_deadzone": 0.25, "pad_sensitivity": 1.0, "mouse_sensitivity": 1.0, "invert_y": false, "pad_style": "auto"}
 	apply_to_inputmap()
 	save_config()
 	binding_changed.emit()
