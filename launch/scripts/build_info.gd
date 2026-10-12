@@ -15,6 +15,7 @@ static func defaults() -> Dictionary:
 		"version_name": "dev",
 		"version_code": 0,
 		"source_sha": "dev",
+		"source_epoch": 0,                      # monotonic commit count of the native baseline: the OTA version floor
 		"run_number": 0,
 		"build_type": "dev",
 		"channel": "dev",

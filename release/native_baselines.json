@@ -1,0 +1,50 @@
+{
+  "_comment": "Native (APK) releases and the OTA channel/runtime they follow. Append a row for every native release. tools/ota_tools.py guard uses it.",
+  "baselines": [
+    {
+      "version": 14,
+      "tag": "v14",
+      "source_sha": "60064326748fee796e4bde3f7c5bebe32534713c",
+      "source_epoch": 49,
+      "version_code": 27,
+      "runtime_compat": "r2-abbbcedcb90e",
+      "channel": "poc-g2"
+    },
+    {
+      "version": 15,
+      "tag": "v15",
+      "source_sha": "15c414af269066424fbde47a1b7da221c6f7704c",
+      "source_epoch": 77,
+      "version_code": 28,
+      "runtime_compat": "r2-abbbcedcb90e",
+      "channel": "poc-g2"
+    },
+    {
+      "version": 16,
+      "tag": "v16",
+      "source_sha": "7a97a8fcd418439afcdd119619b74678b0c7e94d",
+      "source_epoch": 78,
+      "version_code": 29,
+      "runtime_compat": "r2-abbbcedcb90e",
+      "channel": "poc-g2"
+    },
+    {
+      "version": 17,
+      "tag": "v17",
+      "source_sha": "2a80b903cd4714bac869bb3346a57e0308104016",
+      "source_epoch": 81,
+      "version_code": 30,
+      "runtime_compat": "r2-abbbcedcb90e",
+      "channel": "poc-g2"
+    },
+    {
+      "version": 18,
+      "tag": "v18",
+      "source_sha": "dcb9c4d7faec092e18f2ca08145923ad334342d0",
+      "source_epoch": 83,
+      "version_code": 31,
+      "runtime_compat": "r2-abbbcedcb90e",
+      "channel": "poc-g2"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "name": "Baseline-equal payload for v14-v18 (restores v18 gameplay, supersedes poc-g2-3-faeb937)",
+  "channel": "poc-g2",
+  "source_ref": "v18"
+}

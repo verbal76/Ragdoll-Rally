@@ -1,7 +1,11 @@
 {
   "product": "Ragdoll Rally Launch",
   "file_stem": "Ragdoll-Rally-Launch",
-  "version": 12,
-  "deliver": false,
-  "notes": []
+  "version": 19,
+  "notes": [
+    "Steam Deck / Steam Machine: controller-first prompts, automatic Deck graphics preset, lighter comic ink and adaptive resolution.",
+    "Safer updates: the app can never be replaced by an older over-the-air payload, and obsolete or stuck updates are discarded automatically.",
+    "Everything from v18 is included."
+  ],
+  "authoritative_branch": "claude/launch-gameplay-pivot"
 }

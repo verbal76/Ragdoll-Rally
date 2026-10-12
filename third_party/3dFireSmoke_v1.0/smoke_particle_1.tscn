@@ -1,0 +1,56 @@
+[gd_scene load_steps=9 format=3 uid="uid://bsn4rs80jfgu3"]
+
+[ext_resource type="Shader" uid="uid://bnot7evxe61ix" path="res://Shaders/ToonSmokeOutline.gdshader" id="1_qw387"]
+[ext_resource type="Shader" uid="uid://cyr53jwqoga1w" path="res://Shaders/ToonSmoke.gdshader" id="2_jdd4h"]
+
+[sub_resource type="Curve" id="Curve_s2i8u"]
+_data = [Vector2(0, 0), 0.0, 1.96578, 0, 0, Vector2(0.497207, 1), 0.0, 0.0, 0, 0, Vector2(0.99162, 0.0179348), -2.03582, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="CurveTexture" id="CurveTexture_d7dga"]
+curve = SubResource("Curve_s2i8u")
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_odkc3"]
+emission_shape = 1
+emission_sphere_radius = 0.3
+angle_max = 180.0
+direction = Vector3(1, 1, 0)
+spread = 86.969
+gravity = Vector3(0.01, 0.1, 0)
+scale_min = 0.0
+scale_curve = SubResource("CurveTexture_d7dga")
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_7q6gc"]
+render_priority = 0
+shader = ExtResource("1_qw387")
+shader_parameter/outline_color = Color(0, 0, 0, 1)
+shader_parameter/outline_width = 1.2
+shader_parameter/displacementStrength = 0.1
+shader_parameter/displacementSpeed = 0.1
+shader_parameter/noiseDensity = 8.0
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_ht2g5"]
+render_priority = 0
+next_pass = SubResource("ShaderMaterial_7q6gc")
+shader = ExtResource("2_jdd4h")
+shader_parameter/smoke_color = Color(0.701961, 0.701961, 0.701961, 1)
+shader_parameter/highlight_color = Color(0.968627, 0.976471, 0.976471, 1)
+shader_parameter/shadow_color = Color(0.176471, 0.266667, 0.301961, 1)
+shader_parameter/displacementStrength = 0.1
+shader_parameter/displacementSpeed = 0.1
+shader_parameter/noiseDensity = 8.0
+
+[sub_resource type="SphereMesh" id="SphereMesh_qks0c"]
+material = SubResource("ShaderMaterial_ht2g5")
+radius = 0.1
+height = 0.2
+radial_segments = 100
+rings = 64
+
+[node name="SmokeParticle1" type="GPUParticles3D"]
+sorting_offset = -1.0
+amount = 252
+lifetime = 8.0
+speed_scale = 2.0
+process_material = SubResource("ParticleProcessMaterial_odkc3")
+draw_pass_1 = SubResource("SphereMesh_qks0c")

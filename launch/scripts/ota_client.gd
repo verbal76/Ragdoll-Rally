@@ -7,6 +7,15 @@ extends Node
 ##   -> download -> size + SHA-256 verify -> stage (activates at next cold launch).
 ## A pack is promoted to "known good" only after the game starts successfully;
 ## an unconfirmed activation is rolled back at the next launch.
+##
+## VERSION FLOOR (docs/ENGINEERING_POLICY.md section 5): an OTA payload may never replace a newer native baseline's functionality with
+## older code. Every manifest carries source_epoch (monotonic commit count of its source); this build knows its own (build_info source_epoch).
+##  - a manifest older than the native baseline is rejected, whatever its sequence number;
+##  - updates are ordered by (source_epoch, sequence), not by sequence alone;
+##  - every stored pack (staged, current, previous) is re-validated against compat / channel / floor at EVERY launch and at activation,
+##    so an obsolete update that was downloaded before a native upgrade can never activate or stay mounted;
+##  - a confirmed pack that never gets confirmed again (crash loop) is dropped after MAX_UNCONFIRMED_BOOTS launches;
+##  - a deliberate downgrade needs manifest.rollback {authorized, reason, floor_epoch} (published only with an explicit authorization).
 
 signal state_changed(new_state: String)
 signal applying_started
@@ -15,6 +24,7 @@ signal applying_finished(ok: bool)
 const MAX_PACK_BYTES := 64 * 1024 * 1024
 const RESUME_COOLDOWN_S := 1800
 const HTTP_TIMEOUT_S := 12.0
+const MAX_UNCONFIRMED_BOOTS := 3
 
 var root_dir: String = "user://ota"
 var info: Dictionary = {}
@@ -91,26 +101,69 @@ func _remove_file(name: String) -> void:
 	if name != "" and FileAccess.file_exists(_path(name)):
 		DirAccess.remove_absolute(_path(name))
 
+# ------------------------------------------------------------------ version floor
+func _baseline_epoch() -> int:
+	return int(info.get("source_epoch", 0))
+
+## "" when a stored/offered payload is acceptable for THIS native build, else the reason it is not.
+func _meta_invalid(m: Dictionary) -> String:
+	if str(m.get("runtime_compat", "")) != str(info.get("runtime_compat", "")):
+		return "built for a different native runtime"
+	if str(m.get("channel", "")) != str(info.get("channel", "")):
+		return "belongs to another update channel"
+	if not m.has("source_epoch"):
+		return "no source provenance (predates the version floor)"
+	if int(m["source_epoch"]) < _baseline_epoch() and not bool(m.get("rollback_authorized", false)):
+		return "older than this native build (epoch %d < %d)" % [int(m["source_epoch"]), _baseline_epoch()]
+	return ""
+
+func _quarantine_slot(slot: String, reason: String) -> void:
+	var c: Dictionary = d.get(slot, {})
+	if c.is_empty():
+		return
+	_remove_file(str(c.get("file", "")))
+	var failed: Array = d.get("failed_ids", [])
+	if not failed.has(c.get("id", "")):
+		failed.append(c.get("id", ""))
+	d["failed_ids"] = failed
+	d[slot] = {}
+	d["last_error"] = "%s pack '%s' dropped: %s" % [slot, str(c.get("id", "?")), reason]
+	last_status = "DROPPED: " + str(d["last_error"])
+
 # ------------------------------------------------------------------ boot phase
 ## Returns "apply" when a verified staged update is waiting for activation.
 func boot_prepare() -> String:
+	_remove_file("download.part")                      # an interrupted download never lingers
 	var pending_ready := false
 	var p: Dictionary = d.get("pending", {})
 	if not p.is_empty():
+		var why: String = _meta_invalid(p)
 		if str(p.get("status", "")) == "activating":
 			_rollback_pending("previous activation was never confirmed (crash/kill); rolled back")
+		elif why != "":
+			_rollback_pending("staged update is obsolete: " + why)           # e.g. downloaded before a native upgrade
 		elif FileAccess.file_exists(_path(str(p.get("file", "")))):
 			pending_ready = true
 		else:
 			d["pending"] = {}
-	# mount known-good (current, then previous as fallback)
+	# known-good packs: validate against THIS native build before mounting (an APK upgrade keeps user://ota)
 	for slot in ["current", "previous"]:
 		var c: Dictionary = d.get(slot, {})
 		if c.is_empty():
 			continue
+		var why2: String = _meta_invalid(c)
+		if why2 != "":
+			_quarantine_slot(slot, why2)
+			continue
+		if slot == "current" and int(c.get("boots_unconfirmed", 0)) >= MAX_UNCONFIRMED_BOOTS:
+			_quarantine_slot(slot, "never confirmed a successful start in %d launches" % MAX_UNCONFIRMED_BOOTS)
+			continue
 		var f := _path(str(c.get("file", "")))
 		if FileAccess.file_exists(f) and _size(f) == int(c.get("size", -2)) and _mount(f):
 			running = c.duplicate()
+			if slot == "current":
+				c["boots_unconfirmed"] = int(c.get("boots_unconfirmed", 0)) + 1
+				d["current"] = c
 			break
 		d["last_error"] = "known-good pack '%s' unusable; falling back" % slot
 		d[slot] = {}
@@ -131,6 +184,12 @@ func apply_staged() -> bool:
 	_applying = true
 	_set_state("applying")
 	applying_started.emit()
+	var why: String = _meta_invalid(p)
+	if why != "":
+		_rollback_pending("staged update is obsolete: " + why)
+		_applying = false
+		applying_finished.emit(false)
+		return false
 	var f := _path(str(p.get("file", "")))
 	var ok: bool = FileAccess.file_exists(f) and _size(f) == int(p.get("size", -2)) and FileAccess.get_sha256(f) == str(p.get("sha256", ""))
 	if not ok:
@@ -154,12 +213,18 @@ func apply_staged() -> bool:
 func confirm_startup_success() -> void:
 	var p: Dictionary = d.get("pending", {})
 	if p.is_empty() or str(p.get("status", "")) != "activating" or str(running.get("id", "")) != str(p.get("id", "-")):
+		var cur: Dictionary = d.get("current", {})
+		if not cur.is_empty() and str(running.get("id", "")) == str(cur.get("id", "-")) and int(cur.get("boots_unconfirmed", 0)) != 0:
+			cur["boots_unconfirmed"] = 0                 # the known-good pack started fine again
+			d["current"] = cur
+			_save_state()
 		return
 	var old_prev: Dictionary = d.get("previous", {})
 	if not old_prev.is_empty():
 		_remove_file(str(old_prev.get("file", "")))
 	d["previous"] = d.get("current", {})
 	p["status"] = "current"
+	p["boots_unconfirmed"] = 0
 	d["current"] = p
 	d["pending"] = {}
 	last_status = "OTA '%s' confirmed" % str(p.get("name", ""))
@@ -199,10 +264,10 @@ func evaluate_manifest(m: Variant) -> Dictionary:
 	if not (m is Dictionary):
 		return {"action": "reject", "reason": "malformed manifest"}
 	var mm: Dictionary = m
-	for k in ["id", "name", "sequence", "channel", "runtime_compat", "url", "sha256", "size", "source_sha", "published_at"]:
+	for k in ["id", "name", "sequence", "channel", "runtime_compat", "url", "sha256", "size", "source_sha", "published_at", "source_epoch"]:
 		if not mm.has(k):
 			return {"action": "reject", "reason": "manifest missing '%s'" % k}
-	if not (mm["sequence"] is float or mm["sequence"] is int) or not (mm["size"] is float or mm["size"] is int):
+	if not (mm["sequence"] is float or mm["sequence"] is int) or not (mm["size"] is float or mm["size"] is int) or not (mm["source_epoch"] is float or mm["source_epoch"] is int):
 		return {"action": "reject", "reason": "malformed manifest types"}
 	if str(mm["channel"]) != str(info.get("channel", "")):
 		return {"action": "reject", "reason": "wrong channel"}
@@ -210,6 +275,11 @@ func evaluate_manifest(m: Variant) -> Dictionary:
 		return {"action": "reject", "reason": "incompatible runtime (native build required)"}
 	if mm.has("min_version_code") and int(mm["min_version_code"]) > int(info.get("version_code", 0)):
 		return {"action": "reject", "reason": "requires newer native build"}
+	if mm.has("max_version_code") and int(mm["max_version_code"]) < int(info.get("version_code", 0)):
+		return {"action": "reject", "reason": "not meant for this native build"}
+	var sha_src: String = str(mm["source_sha"])
+	if sha_src.length() < 7 or not sha_src.is_valid_hex_number(false):
+		return {"action": "reject", "reason": "bad source revision"}
 	if str(mm["sha256"]).length() != 64 or not str(mm["sha256"]).is_valid_hex_number(false):
 		return {"action": "reject", "reason": "bad sha256"}
 	var size: int = int(mm["size"])
@@ -217,19 +287,37 @@ func evaluate_manifest(m: Variant) -> Dictionary:
 		return {"action": "reject", "reason": "bad size"}
 	if not _url_ok(str(mm["url"])):
 		return {"action": "reject", "reason": "payload url must be https"}
-	var seq: int = int(mm["sequence"])
+	# ---- version floor: never older than this native build, unless a rollback was deliberately authorized
+	var epoch: int = int(mm["source_epoch"])
+	var rb: Variant = mm.get("rollback", null)
+	var rb_ok: bool = rb is Dictionary and bool((rb as Dictionary).get("authorized", false)) and str((rb as Dictionary).get("reason", "")).strip_edges() != "" \
+		and epoch >= int((rb as Dictionary).get("floor_epoch", 1 << 60))
+	if epoch < _baseline_epoch() and not rb_ok:
+		return {"action": "reject", "reason": "older than this native build (epoch %d < %d); downgrade not authorized" % [epoch, _baseline_epoch()]}
 	if (d.get("failed_ids", []) as Array).has(mm["id"]):
 		return {"action": "reject", "reason": "previously failed OTA"}
+	# ---- ordering by (source_epoch, sequence), never sequence alone
+	var seq: int = int(mm["sequence"])
 	var cur: Dictionary = d.get("current", {})
 	var cur_seq: int = int(cur.get("sequence", 0))
+	var cur_epoch: int = int(cur.get("source_epoch", _baseline_epoch())) if not cur.is_empty() else _baseline_epoch()
 	if not running.is_empty():
 		cur_seq = maxi(cur_seq, int(running.get("sequence", 0)))
-	if seq <= cur_seq:
+		cur_epoch = maxi(cur_epoch, int(running.get("source_epoch", 0)))
+	var newer: bool = (epoch > cur_epoch) or (epoch == cur_epoch and seq > cur_seq)
+	if rb_ok and epoch < cur_epoch:
+		newer = seq > cur_seq                      # an authorized rollback is ordered by publication sequence
+	if not newer:
 		return {"action": "none", "reason": "already at or beyond this OTA"}
 	var pend: Dictionary = d.get("pending", {})
-	if not pend.is_empty() and int(pend.get("sequence", 0)) >= seq:
-		return {"action": "none", "reason": "already staged"}
-	return {"action": "download", "reason": "newer compatible OTA"}
+	if not pend.is_empty():
+		var pe: int = int(pend.get("source_epoch", 0))
+		if pe > epoch or (pe == epoch and int(pend.get("sequence", 0)) >= seq):
+			return {"action": "none", "reason": "already staged"}
+	var out := {"action": "download", "reason": "newer compatible OTA"}
+	if rb_ok:
+		out["rollback"] = true
+	return out
 
 func check_for_update() -> Dictionary:
 	if _checking or _applying:
@@ -291,7 +379,8 @@ func _check_impl() -> Dictionary:
 		_remove_file(str(old_pending.get("file", "")))
 	d["pending"] = {"id": mm["id"], "name": mm["name"], "sequence": int(mm["sequence"]), "sha256": str(mm["sha256"]).to_lower(),
 		"size": int(mm["size"]), "file": final_name, "source_sha": mm["source_sha"], "published_at": mm["published_at"],
-		"channel": mm["channel"], "runtime_compat": mm["runtime_compat"], "status": "staged"}
+		"channel": mm["channel"], "runtime_compat": mm["runtime_compat"], "status": "staged", "source_epoch": int(mm["source_epoch"]),
+		"rollback_authorized": bool(ev.get("rollback", false))}
 	return {"status": "staged", "reason": "OTA '%s' staged; applies at next launch" % str(mm["name"])}
 
 func _http_fetch(url: String) -> Dictionary:

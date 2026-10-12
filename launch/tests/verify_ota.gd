@@ -23,6 +23,7 @@ func _info() -> Dictionary:
 	i["ota_enabled"] = true
 	i["ota_manifest_url"] = "https://example.invalid/manifest.json"
 	i["version_code"] = 5
+	i["source_epoch"] = 100
 	i["target_sdk"] = "34"
 	return i
 
@@ -45,7 +46,7 @@ func _make_pck(path: String, marker_name: String, content: String) -> PackedByte
 func _manifest(id: String, seq: int, body: PackedByteArray, over: Dictionary = {}) -> Dictionary:
 	var m := {"id": id, "name": "Test OTA %d" % seq, "sequence": seq, "channel": CH, "runtime_compat": COMPAT,
 		"url": "https://example.invalid/%s.pck" % id, "sha256": _sha(body), "size": body.size(),
-		"source_sha": "abc1234", "published_at": "2026-10-03T00:00:00Z"}
+		"source_sha": "abc1234", "source_epoch": 100 + seq, "published_at": "2026-10-03T00:00:00Z"}
 	for k in over.keys():
 		m[k] = over[k]
 	return m

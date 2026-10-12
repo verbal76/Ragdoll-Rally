@@ -1,0 +1,31 @@
+{
+  "_comment": "Owner-visible decisions for branches whose commits are not (all) reachable from the authoritative branch. tools/branch_ledger.py --check fails for any other unmerged branch.",
+  "origin/main": {
+    "classification": "Integrated through an equivalent implementation",
+    "disposition": "Its one extra commit (41f5f5a) uploads Hot_Attic_Games_Master_Logo_ALPHA_FINAL.png at the repo root. The authoritative branch carries the byte-identical file (blob e11f8c5) at launch/branding/, which is the path the game uses (CLAUDE.md). main itself is 78+ commits behind and has never received v11-v18: merging the authoritative branch into main is an OWNER decision (protected branch)."
+  },
+  "origin/windows-internal-test": {
+    "classification": "Not source: artifact hosting",
+    "disposition": "Orphan branch (no common history) that only holds desktop build archives and a README, because release assets cannot be uploaded from the development environment. It carries no product code. Do not develop on it. Replace with release assets or CI artifacts when available; keep until the owner agrees (binary history is large)."
+  },
+  "_content_findings": [
+    {
+      "where": "origin/wip/gameplay-pivot, origin/claude/launch-mayhem-upgrades",
+      "paths": "launch/branding/Hot_Attic_Games_Master_Logo.png(.import)",
+      "classification": "Intentionally removed",
+      "note": "CLAUDE.md: the original logo file name is obsolete; the only canonical artwork is Hot_Attic_Games_Master_Logo_ALPHA_FINAL.png (present at launch/branding/)."
+    },
+    {
+      "where": "origin/claude/launch-mayhem-upgrades",
+      "paths": "branding/RR_Legacy_Icon.png, legacy/branding/RR_Legacy_*",
+      "classification": "Intentionally removed",
+      "note": "CLAUDE.md: there is one product, no separate 'Legacy' game; the legacy icon set was dropped."
+    },
+    {
+      "where": "origin/claude/launch-mayhem-upgrades",
+      "paths": "release/__pycache__/*.pyc",
+      "classification": "Superseded",
+      "note": "Compiled Python caches that were committed by mistake; ignored via .gitignore."
+    }
+  ]
+}

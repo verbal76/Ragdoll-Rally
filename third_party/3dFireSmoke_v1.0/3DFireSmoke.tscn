@@ -1,0 +1,90 @@
+[gd_scene load_steps=12 format=3 uid="uid://cmsm0mtvsjf54"]
+
+[ext_resource type="PackedScene" uid="uid://crb7b2ap5nl0i" path="res://Scenes/3d_fire.tscn" id="1_xlww7"]
+[ext_resource type="PackedScene" uid="uid://bsn4rs80jfgu3" path="res://Scenes/smoke_particle_1.tscn" id="2_p15do"]
+[ext_resource type="PackedScene" uid="uid://p27pshnwxf0w" path="res://Scenes/smoke_particle_2.tscn" id="3_xlww7"]
+[ext_resource type="ArrayMesh" uid="uid://bm8tovng1jiiu" path="res://Models/timber.obj" id="4_xlww7"]
+
+[sub_resource type="Sky" id="Sky_tqo4t"]
+
+[sub_resource type="Environment" id="Environment_vpudb"]
+background_mode = 2
+background_color = Color(0.223529, 0.223529, 0.223529, 1)
+sky = SubResource("Sky_tqo4t")
+ambient_light_color = Color(0.2, 0.258824, 0.27451, 1)
+ambient_light_sky_contribution = 0.41
+glow_enabled = true
+glow_intensity = 0.5
+glow_strength = 1.97
+glow_hdr_threshold = 0.72
+glow_hdr_scale = 1.59
+glow_hdr_luminance_cap = 15.3
+
+[sub_resource type="PhysicalSkyMaterial" id="PhysicalSkyMaterial_glur4"]
+ground_color = Color(0.894118, 0.811765, 0.717647, 1)
+
+[sub_resource type="Sky" id="Sky_axns1"]
+sky_material = SubResource("PhysicalSkyMaterial_glur4")
+
+[sub_resource type="Environment" id="Environment_2mcs5"]
+background_mode = 2
+sky = SubResource("Sky_axns1")
+ambient_light_color = Color(0.784314, 0.784314, 0.784314, 1)
+glow_enabled = true
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_38m8t"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_try20"]
+albedo_color = Color(0.243137, 0.117647, 0.0313726, 1)
+
+[node name="Node3D" type="Node3D"]
+
+[node name="3DFire" parent="." instance=ExtResource("1_xlww7")]
+transform = Transform3D(-2.18557e-08, 0, 0.5, 0, 0.5, 0, -0.5, 0, -2.18557e-08, 0, 0.437072, -0.135039)
+
+[node name="SmokeParticle1" parent="." instance=ExtResource("2_p15do")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.00973874, 0.948762, -0.16701)
+
+[node name="SmokeParticle2" parent="." instance=ExtResource("3_xlww7")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0220734, 0.541112, -0.107621)
+visible = false
+
+[node name="OmniLight3D" type="OmniLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0284452, 0.570878, -0.150969)
+light_color = Color(1, 1, 0.235294, 1)
+light_energy = 3.0
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_vpudb")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.655, 6.207)
+environment = SubResource("Environment_2mcs5")
+
+[node name="Env" type="Node3D" parent="."]
+
+[node name="GroundPlane" type="MeshInstance3D" parent="Env"]
+transform = Transform3D(10, 0, 0, 0, 10, 0, 0, 0, 10, 0, 0, 0)
+mesh = SubResource("PlaneMesh_38m8t")
+
+[node name="Logs" type="Node3D" parent="Env"]
+
+[node name="Timber0" type="MeshInstance3D" parent="Env/Logs"]
+transform = Transform3D(1, 0, 0, 0, 0.34202, -0.939693, 0, 0.939693, 0.34202, 0, 0.269237, 0)
+material_override = SubResource("StandardMaterial3D_try20")
+mesh = ExtResource("4_xlww7")
+
+[node name="Timber1" type="MeshInstance3D" parent="Env/Logs"]
+transform = Transform3D(0.0366437, 0.939062, 0.34179, 0, 0.34202, -0.939693, -0.999328, 0.0344338, 0.0125329, 0.128355, 0.269237, -0.163663)
+material_override = SubResource("StandardMaterial3D_try20")
+mesh = ExtResource("4_xlww7")
+
+[node name="Timber2" type="MeshInstance3D" parent="Env/Logs"]
+transform = Transform3D(-0.994522, -0.0982242, -0.0357507, 0, 0.34202, -0.939693, 0.104528, -0.934545, -0.340146, -0.0219564, 0.269237, -0.313303)
+material_override = SubResource("StandardMaterial3D_try20")
+mesh = ExtResource("4_xlww7")
+
+[node name="Timber3" type="MeshInstance3D" parent="Env/Logs"]
+transform = Transform3D(-0.0348995, -0.93912, -0.341812, 0, 0.34202, -0.939693, 0.999391, -0.0327948, -0.0119363, -0.174095, 0.269237, -0.147272)
+material_override = SubResource("StandardMaterial3D_try20")
+mesh = ExtResource("4_xlww7")

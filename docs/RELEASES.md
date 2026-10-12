@@ -1,9 +1,16 @@
 # Releases and versions
 
-**Ragdoll Rally Launch v11 is the current public version. The next delivered build is v12.**
+**Ragdoll Rally Launch v18 is the last release under the old `v<N>` convention. The next coordinated release is Build 19 (decision N1, 2026-10-12).**
 
-The newest playable file is always the GitHub **Latest** release, titled `Ragdoll Rally Launch v<N>`, containing `Ragdoll-Rally-Launch-v<N>.apk`.
-The rules and the delivery procedure are in the repository root `CLAUDE.md` (they are mandatory for every session).
+From Build 19 on (Hot Attic Games standard v2.0): release `Ragdoll Rally Build NN`, tag `build-NN`, assets `Ragdoll Rally Build NN APK.apk` / `... EXE.zip` /
+`... Linux.tar.gz`, plus `build-manifest.json` and `checksums.sha256`, one number and one source SHA for all of them. GitHub stores spaces in asset file names as
+dots (`Ragdoll.Rally.Build.19.APK.apk`); the release page label shows the standard name. All historical `v1`-`v18` releases and tags stay untouched.
+Builds come only from the manual **Coordinated build** workflow (`.github/workflows/build.yml`), see `CLAUDE.md`. `local_only` runs keep the verified set as the
+private Actions artifact `build-NN-release-set` (14 days) and consume no number.
+The OTA revision (`poc-g2-<seq>-<sha>`, `g3-...`) is a separate identifier from the build number.
+
+## Historical convention (v1-v18)
+The newest playable file was the GitHub **Latest** release, titled `Ragdoll Rally Launch v<N>`, containing `Ragdoll-Rally-Launch-v<N>.apk`.
 
 ## How the numbering was established (2026-10-04)
 Public versions count the playable builds that were actually *delivered* as installable APK releases, in order.
@@ -23,7 +30,9 @@ The old `bN` numbers were CI run numbers (they double as Android versionCode), s
 | v8 | `launch-g2x-b9` | expanded city + HUD safe margins (the "b9" checkpoint) |
 | v9 | `launch-g2m-b11` | dense breakable city, TNT, beams, upgrades |
 | v10 | `launch-g2m-b12` | + Hot Attic Games studio splash |
-| **v11** | `rr-launch-b15` (re-tagged `v11`) | + "RR Launch" name, new icon, transparent icon background |
+| v11 | `rr-launch-b15` (re-tagged `v11`) | + "RR Launch" name, new icon, transparent icon background |
+| v12 | `v12` | gameplay pivot (18 ragdolls, skipping/ricochet physics, limbs, fire, upgrades, Test Yard) + Hot Attic Games studio splash |
+| **v13** | `v13` | trajectory governor, graceful world boundary, score-vs-bank economy, five new cities (Downtown, Old Town, Suburbia, Industrial District, Resort Strip), no test cheat |
 
 Why v11 and not v15 or v13: v15 would be the CI run number / versionCode (an internal counter with gaps), and the old tags
 were never a clean sequence. Eleven installable builds were delivered, so the current version is v11.
@@ -44,3 +53,12 @@ CI run, signing identity, checksums. They appear in the release notes' Technical
 ## Multiple platforms
 If a Windows (or other) build is ever added it shares the Android build's public version for the same release
 (`Ragdoll-Rally-Launch-v<N>-Windows.zip`). Platform build counters stay internal.
+
+## v13 note
+v13 ships a dead (unreachable) selector string "LOCKED - not built yet": every environment is playable so no screen can show it. It was found after delivery by inspecting the published APK (the CI content check had masked its own exit code through a `tee` pipe; fixed with `pipefail`). The source is cleaned for the next build; v13 itself is unchanged.
+
+| v14 | `v14` | rising hillside cities, flatter launch arc, blood/fire effects |
+| **v15** | `v15` | modular-building towns everywhere, cars + pedestrians, movable launcher + 180-degree aim, mayhem/destruction pass, launchers, comic-ink look, Windows PC build |
+| **v16** | `v16` | controller SELECT button (default A, remappable) fixes menu selection; D-pad axis support |
+| **v17** | `v17` | EXIT button, bigger cities, persistent city damage (RESET CITY, auto-reset at 95%), railgun balance + per-flight energy fatigue |
+| **v18** | `v18` | controller fix: left stick no longer cycles menu buttons in the game view |

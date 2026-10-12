@@ -7,6 +7,7 @@ extends Control
 var main_ref: Node
 var _settings: PanelContainer
 var _view_btn: Button
+var _gore_btn: Button
 var _gear: Button
 var _about: PanelContainer
 var _about_label: Label
@@ -26,10 +27,12 @@ func _ready() -> void:
 		_refresh_view_btn()
 		_settings.visible = true)
 	add_child(gear)
-	_settings = _panel("SETTINGS", 640, 400)
+	_settings = _panel("SETTINGS", 640, 480)
 	var vb: VBoxContainer = _settings.get_child(0)
 	_view_btn = _button("", _toggle_view)
 	vb.add_child(_view_btn)
+	_gore_btn = _button("", _toggle_gore)
+	vb.add_child(_gore_btn)
 	vb.add_child(_button("About", _open_about))
 	vb.add_child(_button("Close", func(): _settings.visible = false))
 	_about = _panel("ABOUT", 980, 640)
@@ -110,7 +113,14 @@ func _toggle_view() -> void:
 		main_ref.set_view_right(not bool(main_ref.view_right))
 	_refresh_view_btn()
 
+func _toggle_gore() -> void:
+	if main_ref and main_ref.has_method("set_gore"):
+		main_ref.set_gore(not bool(main_ref.get("gore")))
+	_refresh_view_btn()
+
 func _refresh_view_btn() -> void:
+	if _gore_btn:
+		_gore_btn.text = "Gore: %s" % ("ON" if (main_ref == null or bool(main_ref.get("gore"))) else "OFF")
 	var right: bool = main_ref != null and bool(main_ref.get("view_right"))
 	_view_btn.text = "Pull view: lower-%s" % ("right" if right else "left")
 
