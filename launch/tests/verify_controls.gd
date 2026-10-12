@@ -267,6 +267,10 @@ func _run() -> void:
 	main.launcher_levels["railgun"] = 0
 	main.select_launcher("slingshot")
 	check(not bad, "with a controller no on-screen hint mentions mouse or keyboard")
+	main._set_rich(main.lbl_hint, main._hint_text())
+	check(main.lbl_hint.text.contains("[img=") and main.lbl_hint.text.contains("glyphs/"), "the aiming hint shows controller glyphs inline")
+	main._set_rich(main.lbl_hint, "OUT OF BOUNDS")
+	check(main.lbl_hint.text == "[center]OUT OF BOUNDS[/center]", "plain hints still render as centred text")
 	main.controls_panel.open()
 	await frames(2)
 	check(main.controls_panel._grid.columns == 4, "controls screen shows only gamepad bindings while a controller is in use")

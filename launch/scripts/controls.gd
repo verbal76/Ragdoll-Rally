@@ -1,5 +1,6 @@
 extends Node
 const SafeCfg := preload("res://scripts/safe_cfg.gd")
+const GlyphLib := preload("res://scripts/glyph_lib.gd")
 ## Input layer: every control is a remappable action with up to two keyboard/mouse bindings and two gamepad bindings, stored in
 ## user://controls.cfg. Gamepads are detected automatically (connect/disconnect at any time); the game follows whichever device was
 ## used last, so on-screen prompts show the right keys or buttons. Touch (Android) is unaffected: emulated mouse events always aim.
@@ -163,6 +164,8 @@ func label_of(spec: Variant) -> String:
 		"jbtn":
 			var ps: bool = pad_kind() == "ps"
 			var names_x: Array = ["A", "B", "X", "Y", "Back", "Guide", "Start", "L-Stick", "R-Stick", "LB", "RB", "D-Pad Up", "D-Pad Down", "D-Pad Left", "D-Pad Right"]
+			if pad_kind() == "nintendo":          # printed legends: the bottom button is B, the right one A (positions are Xbox-layout)
+				names_x = ["B", "A", "Y", "X", "-", "Home", "+", "L-Stick", "R-Stick", "L", "R", "D-Pad Up", "D-Pad Down", "D-Pad Left", "D-Pad Right"]
 			var names_p: Array = ["Cross", "Circle", "Square", "Triangle", "Share", "PS", "Options", "L3", "R3", "L1", "R1", "D-Pad Up", "D-Pad Down", "D-Pad Left", "D-Pad Right"]
 			var arr: Array = names_p if ps else names_x
 			return str(arr[c]) if c >= 0 and c < arr.size() else "Pad %d" % c
@@ -179,9 +182,9 @@ func label_of(spec: Variant) -> String:
 				JOY_AXIS_RIGHT_Y:
 					return "R-Stick Down" if sg > 0 else "R-Stick Up"
 				JOY_AXIS_TRIGGER_LEFT:
-					return "L2" if ps2 else "LT"
+					return "L2" if ps2 else ("ZL" if pad_kind() == "nintendo" else "LT")
 				JOY_AXIS_TRIGGER_RIGHT:
-					return "R2" if ps2 else "RT"
+					return "R2" if ps2 else ("ZR" if pad_kind() == "nintendo" else "RT")
 			return "Axis %d%s" % [c, "+" if sg > 0 else "-"]
 	return "-"
 
@@ -312,10 +315,22 @@ func _input(event: InputEvent) -> void:
 	_listening = {}
 	listen_finished.emit(true)
 
+const DEVICE_HOLD_MS := 600                 # mixed input: after a prompt switch, the other device must wait this long before it can flip the prompts back
+var _last_switch_ms := -100000
+var clock_ms := -1                          # tests: fake clock (-1 = real time)
+
+func _now_ms() -> int:
+	return clock_ms if clock_ms >= 0 else Time.get_ticks_msec()
+
 func _set_device(kind: String) -> void:
-	if kind != last_device:
-		last_device = kind
-		device_changed.emit(kind)
+	if kind == last_device:
+		return
+	var now := _now_ms()
+	if now - _last_switch_ms < DEVICE_HOLD_MS and has_pad():
+		return                              # no flicker while both a controller and keyboard / mouse are in use
+	last_device = kind
+	_last_switch_ms = now
+	device_changed.emit(kind)
 
 func _on_joy_changed(device: int, connected: bool) -> void:
 	if connected:
@@ -346,6 +361,48 @@ func prompt(id: String) -> String:
 		if sp != null:
 			return label_of(sp)
 	return "(unbound)"
+
+## Same choice as prompt(), as BBCode with the button / key art inline (text fallback when the set has no art for it).
+func prompt_bb(id: String) -> String:
+	var a: Dictionary = entry(id)
+	if a.is_empty():
+		return GlyphLib.esc(id)
+	var dev: String = "pad" if (last_device == "pad" and has_pad()) else "kbm"
+	for d in [dev, "kbm" if dev == "pad" else "pad"]:
+		for sp in (a[d] as Array):
+			if sp != null:
+				return _spec_bb(sp)
+	return "(unbound)"
+
+func _spec_bb(sp: Variant) -> String:
+	var lbl: String = label_of(sp)
+	var t: String = str((sp as Dictionary).get("t", ""))
+	if t == "key" or t == "mouse":
+		return GlyphLib.bb(GlyphLib.kbm_path(sp), lbl)
+	return GlyphLib.bb(GlyphLib.path_for(pad_kind(), lbl), lbl)
+
+## A fixed logical pad glyph (a b x y lb rb lt rt lstick rstick l3 r3 back start dpad_*) in the active prompt family; positional keys follow the pad's printed legends.
+func glyph_bb(key: String) -> String:
+	var fb: Dictionary = {"lstick": "LEFT STICK", "rstick": "RIGHT STICK", "dpad": "D-PAD", "a": 0, "b": 1, "x": 2, "y": 3, "back": 4, "start": 6, "l3": 7, "r3": 8, "lb": 9, "rb": 10,
+		"dpad_up": 11, "dpad_down": 12, "dpad_left": 13, "dpad_right": 14}
+	var f: Variant = fb.get(key, key.to_upper())
+	var text: String = f if f is String else label_of({"t": "jbtn", "c": int(f)})
+	if key == "lt" or key == "rt":
+		text = label_of({"t": "jaxis", "c": JOY_AXIS_TRIGGER_LEFT if key == "lt" else JOY_AXIS_TRIGGER_RIGHT, "s": 1})
+	return GlyphLib.bb(GlyphLib.pad_path(pad_kind(), key), text)
+
+## Expands {action_id} and {pad_glyph} tokens in a hint template into BBCode with inline glyphs (everything else is escaped text).
+func expand_prompts(t: String) -> String:
+	var out := ""
+	var rx := RegEx.new()
+	rx.compile("\\{([a-z_0-9]+)\\}")
+	var pos := 0
+	for m in rx.search_all(t):
+		out += GlyphLib.esc(t.substr(pos, m.get_start() - pos))
+		var k: String = m.get_string(1)
+		out += prompt_bb(k) if not entry(k).is_empty() else glyph_bb(k)
+		pos = m.get_end()
+	return out + GlyphLib.esc(t.substr(pos))
 
 ## 2D aim vector from the aim actions (x right, y down), deadzone and sensitivity applied. `fine` slows it while the precision action is held.
 func aim_vector() -> Vector2:

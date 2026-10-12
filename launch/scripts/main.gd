@@ -104,7 +104,7 @@ var _elev_bias: float = 0.0                    # degrees added to the pull-back 
 var launch_origin: Vector3 = LAUNCH_HOME       # current launcher position (muzzle / pouch rest point)
 var _va_on := false                           # virtual aim (keys / stick) is driving the arc aim
 var _va_p := Vector2(0.0, 0.5)                # virtual pull (side, back) in the same units as the drag aim
-var _toast: Label = null
+var _toast: RichTextLabel = null
 var _toast_t: float = 0.0
 var ink_on: bool = true                       # comic-ink post-process (assets/fx/ink_post.gdshader); toggle: INK button
 var _ink_quad: MeshInstance3D = null
@@ -189,7 +189,7 @@ var _prev_x: float = 0.0
 # ui
 var ui: CanvasLayer
 var lbl_score: Label
-var lbl_hint: Label
+var lbl_hint: RichTextLabel
 var lbl_stats: Label
 var lbl_fps: Label
 var bar_bg: ColorRect
@@ -415,14 +415,14 @@ func _setup_ui() -> void:
 	lbl_score.offset_top = 8
 	lbl_score.offset_left = -300
 	lbl_score.offset_right = 300
-	lbl_hint = _label(34, HORIZONTAL_ALIGNMENT_CENTER)
+	lbl_hint = _rich(34)
 	ui.add_child(lbl_hint)
 	lbl_hint.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
 	lbl_hint.offset_top = -90
 	lbl_hint.offset_bottom = -20
 	lbl_hint.offset_left = -400
 	lbl_hint.offset_right = 400
-	lbl_hint.text = "DRAG BACK, AIM, RELEASE!"
+	_set_rich(lbl_hint, "DRAG BACK, AIM, RELEASE!")
 	lbl_stats = _label(22, HORIZONTAL_ALIGNMENT_LEFT)
 	ui.add_child(lbl_stats)
 	lbl_stats.position = Vector2(16, 10)
@@ -659,7 +659,7 @@ var _ui_theme: Theme
 var rebuilt_town := false
 var _was_modal := false
 var _hud_hide: Array = []
-var lbl_legend: Label
+var lbl_legend: RichTextLabel
 
 ## One overlay at a time: while a panel is open the HUD and the result card step aside, so nothing is drawn over anything else.
 func _modal_sync() -> void:
@@ -684,7 +684,7 @@ func _modal_sync() -> void:
 		var pad: bool = controls != null and controls.last_device == "pad" and controls.has_pad()
 		var menus: bool = modal or state == State.RESULT or state == State.SELECT
 		lbl_legend.visible = pad and menus
-		lbl_legend.text = "D-PAD: choose     A: select     B: back"
+		_set_rich(lbl_legend, "{dpad} choose     {select} select     {b} back")
 
 func _hud_button(txt: String, top: float, cb: Callable) -> Button:
 	var b := Button.new()
@@ -743,7 +743,7 @@ func _build_controls_ui() -> void:
 	controls_panel = ControlsPanel.new()
 	controls_panel.setup(controls)
 	controls_panel.quit_requested.connect(func(): get_tree().quit())
-	controls_panel.closed.connect(func(): lbl_hint.text = _hint_text())
+	controls_panel.closed.connect(func(): _set_rich(lbl_hint, _hint_text()))
 	ui.add_child(controls_panel)
 	controls_panel.set_meta("top", true)
 	if not OS.has_feature("mobile"):
@@ -775,7 +775,7 @@ func _build_controls_ui() -> void:
 		btn_gfx.offset_bottom = 346
 		btn_gfx.pressed.connect(graphics_panel.open)
 		ui.add_child(btn_gfx)
-		lbl_legend = _label(24, HORIZONTAL_ALIGNMENT_CENTER)
+		lbl_legend = _rich(24)
 		ui.add_child(lbl_legend)
 		lbl_legend.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
 		lbl_legend.offset_top = -44
@@ -805,7 +805,7 @@ func _build_controls_ui() -> void:
 	lbl_city.offset_bottom = 108
 	lbl_city.offset_left = -200
 	lbl_city.offset_right = 200
-	_toast = _label(28, HORIZONTAL_ALIGNMENT_CENTER)
+	_toast = _rich(28)
 	ui.add_child(_toast)
 	_toast.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	_toast.offset_top = 70
@@ -816,7 +816,8 @@ func _build_controls_ui() -> void:
 	controls.device_changed.connect(func(_k): _apply_focus_mode())
 	controls.pad_connected.connect(func(n, c):
 		_show_toast(("Controller connected: " if c else "Controller disconnected: ") + n)
-		lbl_hint.text = _hint_text() if state == State.AIM else lbl_hint.text)
+		if state == State.AIM:
+			_set_rich(lbl_hint, _hint_text()))
 
 func _build_upgrade_panel() -> void:
 	upgrade_panel = Control.new()
@@ -1043,6 +1044,23 @@ func _label(sz: int, align: int) -> Label:
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return l
 
+## Hint / legend / toast line that can show controller and keyboard glyphs inline (BBCode centred). Templates use {fire}-style tokens; see Controls.expand_prompts.
+func _rich(sz: int) -> RichTextLabel:
+	var l := RichTextLabel.new()
+	l.bbcode_enabled = true
+	l.fit_content = false
+	l.scroll_active = false
+	l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	l.add_theme_font_size_override("normal_font_size", sz)
+	l.add_theme_color_override("default_color", Color(1, 1, 1))
+	l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	l.add_theme_constant_override("outline_size", 8)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return l
+
+func _set_rich(l: RichTextLabel, t: String) -> void:
+	l.text = "[center]%s[/center]" % (controls.expand_prompts(t) if controls != null else t.replace("[", "[lb]"))
+
 ## Keep every HUD element inside the visible/safe area (rounded corners, cutouts, nav bars).
 func _apply_safe_area() -> void:
 	var vp: Vector2 = get_viewport().get_visible_rect().size
@@ -1213,7 +1231,7 @@ func reset(keep_city: bool = false) -> void:
 	btn_skip.visible = false
 	lbl_combo.visible = false
 	lbl_hint.visible = true
-	lbl_hint.text = _hint_text()
+	_set_rich(lbl_hint, _hint_text())
 	for d in _dots:
 		d.visible = false
 	cam.global_transform = _cam_aim_xf
@@ -1302,35 +1320,35 @@ func _apply_launcher() -> void:
 		else:
 			_set_aim_pose(Vector3.RIGHT, 0.0)
 		cam.global_transform = _cam_aim_xf
-	lbl_hint.text = _hint_text()
+	_set_rich(lbl_hint, _hint_text())
 
 func _hint_text() -> String:
 	var desk: bool = controls != null and not OS.has_feature("mobile")
 	var pad: bool = desk and controls.last_device == "pad" and controls.has_pad()
-	var fire: String = controls.prompt("fire") if controls else ""
+	var fire: String = "{fire}"             # token: Controls.expand_prompts shows the bound button / key art
 	match str(L["mode"]):
 		"direct":
 			if pad:
-				return "AIM: LEFT STICK    FIRE: %s" % fire
+				return "AIM: {lstick}    FIRE: %s" % fire
 			if desk:
 				return "AIM: DRAG    FIRE: %s" % fire
 			return "DRAG TO AIM, RELEASE TO FIRE"
 		"charge":
 			if pad:
-				return "AIM: LEFT STICK    HOLD %s TO CHARGE" % fire
+				return "AIM: {lstick}    HOLD %s TO CHARGE" % fire
 			if desk:
 				return "AIM: DRAG    HOLD %s TO CHARGE" % fire
 			return "DRAG TO AIM, RELEASE TO CHARGE"
 		"topdown":
 			if pad:
-				return "MOVE BULLSEYE: LEFT STICK    FIRE: %s" % fire
+				return "MOVE BULLSEYE: {lstick}    FIRE: %s" % fire
 			if desk:
 				return "MOVE BULLSEYE: CLICK    FIRE: %s" % fire
 			return "TOUCH THE MAP: BULLSEYE, THEN FIRE"
 	if pad:
-		return "LEFT STICK: PULL BACK + AIM    FIRE: %s" % fire
+		return "{lstick} PULL BACK + AIM    FIRE: %s" % fire
 	if desk:
-		return "DRAG BACK + RELEASE, OR WASD + %s" % fire
+		return "DRAG BACK + RELEASE, OR {aim_up}{aim_left}{aim_down}{aim_right} + %s" % fire
 	return "DRAG BACK, AIM, RELEASE!" if attempt <= 1 else "AGAIN! Drag back and let go."
 
 func _update_launcher_ui() -> void:
@@ -1475,7 +1493,7 @@ func _tick_aim(dt: float) -> void:
 			if randf() < _charge * 0.6:
 				fx.sparks(pos, Vector3.UP)
 		lbl_hint.visible = true
-		lbl_hint.text = "CHARGING  %d%%" % int(_charge * 100.0)
+		_set_rich(lbl_hint, "CHARGING  %d%%" % int(_charge * 100.0))
 		if _charge >= 1.0:
 			fire()
 
@@ -1700,11 +1718,11 @@ func set_place_mode(on: bool) -> void:
 		var h: float = maxf(150.0 / (tan(deg_to_rad(28.0)) * aspect), 130.0 / tan(deg_to_rad(28.0)))
 		cam.global_transform = Transform3D(Basis.IDENTITY, Vector3(150.0, h, 0.0)).looking_at(Vector3(150.0, 0.0, 0.0), Vector3(0, 0, -1))
 		cam.far = maxf(cam.far, h + 100.0)
-		lbl_hint.text = ("LEFT STICK: MOVE THE LAUNCHER    %s: DONE" % controls.prompt("fire")) if (controls != null and controls.last_device == "pad") else "TAP THE CITY TO MOVE THE LAUNCHER"
+		_set_rich(lbl_hint, "{lstick} MOVE THE LAUNCHER    {fire} DONE" if (controls != null and controls.last_device == "pad") else "TAP THE CITY TO MOVE THE LAUNCHER")
 		lbl_hint.visible = true
 	else:
 		cam.global_transform = _cam_aim_xf
-		lbl_hint.text = _hint_text()
+		_set_rich(lbl_hint, _hint_text())
 
 func _place_at_screen(pos: Vector2) -> void:
 	var o: Vector3 = cam.project_ray_origin(pos)
@@ -1735,7 +1753,7 @@ func _toggle_fullscreen() -> void:
 func _show_toast(t: String) -> void:
 	if _toast == null:
 		return
-	_toast.text = t
+	_set_rich(_toast, t.replace("{", "("))
 	_toast.visible = true
 	_toast_t = 2.2
 
@@ -1932,7 +1950,7 @@ func _apply_pull(p: Vector2) -> void:
 	else:
 		bar_fill.color = Color(1.0, 0.25, 0.2).lerp(Color(0.8, 0.3, 1.0), (aim_power - 1.0) / (OVERDRIVE_MAX - 1.0))
 	lbl_hint.visible = aim_power > 1.02
-	lbl_hint.text = "OVERDRIVE!"
+	_set_rich(lbl_hint, "OVERDRIVE!")
 	_bar_tick.position.x = 3.0 + 314.0 / OVERDRIVE_MAX
 
 static func speed_for_power(p: float, cls: bool = false) -> float:
@@ -2404,7 +2422,7 @@ func _hit_boundary() -> void:
 		return
 	_oob_at = flight_t + 0.45
 	lbl_hint.visible = true
-	lbl_hint.text = "OUT OF BOUNDS"
+	_set_rich(lbl_hint, "OUT OF BOUNDS")
 	for bd in ragdoll.bodies:
 		bd.linear_velocity = bd.linear_velocity * 0.15
 		bd.angular_velocity = bd.angular_velocity * 0.3
